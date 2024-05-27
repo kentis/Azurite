@@ -15,6 +15,7 @@ import {
   createUniquePartitionKey
 } from "../utils/table.entity.test.utils";
 import uuid from "uuid";
+import TableTestServerFactory from "../utils/TableTestServerFactory";
 // import uuid from "uuid";
 // Set true to enable debug log
 configLogger(false);
@@ -663,16 +664,12 @@ describe("table Entity APIs test - using Azure/data-tables", () => {
         }
         // we should not hit this assert if the exception is generated.
         // it helps catch the cases which slip through filter validation
-        assert.strictEqual(
-          all.length,
-          -1,
-          `Failed on number of results with query ${queryTest.queryOptions.filter}.`
-        );
+        assert.fail(`Query '${queryTest.queryOptions.filter}' did not generate the expected validation exception.`)
       } catch (filterException: any) {
         assert.strictEqual(
           [400, 501].includes(filterException.statusCode),
           true,
-          `Filter "${queryTest.queryOptions.filter}". Unexpected error. We got : ${filterException.message}`
+          `Filter "${queryTest.queryOptions.filter}" returned status code ${filterException.statusCode} instead of [400/501]. Unexpected error. We got : ${filterException.message}`
         );
       }
       testsCompleted++;
@@ -802,7 +799,8 @@ describe("table Entity APIs test - using Azure/data-tables", () => {
     await tableClient.deleteTable();
   });
 
-  it("13. should find both old and new guids (backwards compatible) when using guid type, @loki", async () => {
+  // Skip the case when running in-memory. Backwards compatibility with old DBs does not apply.
+  (TableTestServerFactory.inMemoryPersistence() ? it.skip : it)("13. should find both old and new guids (backwards compatible) when using guid type, @loki", async () => {
     const tableClient = createAzureDataTablesClient(
       testLocalAzuriteInstance,
       "reproTable"
@@ -973,11 +971,533 @@ describe("table Entity APIs test - using Azure/data-tables", () => {
     all.forEach((entity) => {
       assert.ok(
         entity.partitionKey === `${partitionKeyForQueryTest}3` ||
-          ((entity.partitionKey === `${partitionKeyForQueryTest}1` ||
-            entity.partitionKey === `${partitionKeyForQueryTest}2`) &&
-            entity.rowKey === "1")
+        ((entity.partitionKey === `${partitionKeyForQueryTest}1` ||
+          entity.partitionKey === `${partitionKeyForQueryTest}2`) &&
+          entity.rowKey === "1")
       );
     });
+    await tableClient.deleteTable();
+  });
+
+  it("15. should find a property identifier starting with underscore, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("under")
+    );
+    const partitionKey = createUniquePartitionKey("");
+    const testEntity = { partitionKey, rowKey: "1", _foo: "bar" };
+
+    await tableClient.createTable({ requestOptions: { timeout: 60000 } });
+    const result = await tableClient.createEntity(testEntity);
+    assert.ok(result.etag);
+
+    const queryResult = await tableClient
+      .listEntities<TableTestEntity>({
+        queryOptions: {
+          filter: `PartitionKey eq '${partitionKey}' and _foo eq 'bar'`
+        }
+      })
+      .next();
+    assert.notStrictEqual(queryResult.value, undefined);
+    await tableClient.deleteTable();
+  });
+
+  // issue 1828
+
+  it("16. should find guids when using filter with ge, lt, gt and ne, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("guidfilters")
+    );
+    const partitionKeyForQueryTest = getUniqueName("1");
+    const totalItems = 3;
+    await tableClient.createTable();
+
+    const guidEntities: TableTestEntity[] = [];
+
+    const entity0 = entityFactory.createBasicEntityForTest(
+      partitionKeyForQueryTest
+    );
+    entity0.guidField.value = "11111111-1111-1111-1111-111111111111";
+    guidEntities.push(entity0);
+
+    const entity1 = entityFactory.createBasicEntityForTest(
+      partitionKeyForQueryTest
+    );
+    entity1.guidField.value = "22222222-2222-2222-2222-222222222222";
+    guidEntities.push(entity1);
+
+    const entity2 = entityFactory.createBasicEntityForTest(
+      partitionKeyForQueryTest
+    );
+    entity2.guidField.value = "33333333-3333-3333-3333-333333333333";
+    guidEntities.push(entity2);
+
+    for (let i = 0; i < totalItems; i++) {
+      const result = await tableClient.createEntity(guidEntities[i]);
+      assert.notStrictEqual(result.etag, undefined);
+    }
+
+    const maxPageSize = 10;
+    let testsCompleted = 0;
+    const queriesAndExpectedResult = [
+      {
+        index: 0,
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest}) and (guidField ne guid'${guidEntities[1].guidField.value}')`
+        },
+        expectedResult: 2, // we insert 3 and don't want this one
+        expectedValue: guidEntities[0].guidField.value
+      },
+      {
+        index: 1,
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest}) and (guidField lt guid'${guidEntities[1].guidField.value}')`
+        },
+        expectedResult: 1,
+        expectedValue: guidEntities[0].guidField.value
+      },
+      {
+        index: 2,
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest}) and (guidField ge guid'${guidEntities[1].guidField.value}')`
+        },
+        expectedResult: 2,
+        expectedValue: guidEntities[1].guidField.value
+      },
+      {
+        index: 3,
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest}) and (guidField gt guid'${guidEntities[1].guidField.value}')`
+        },
+        expectedResult: 1,
+        expectedValue: guidEntities[2].guidField.value
+      }
+    ];
+
+    for (const queryTest of queriesAndExpectedResult) {
+      try {
+        const entities = tableClient.listEntities<TableTestEntity>({
+          queryOptions: queryTest.queryOptions
+        });
+        let all: TableTestEntity[] = [];
+        for await (const entity of entities.byPage({
+          maxPageSize
+        })) {
+          all = [...all, ...entity];
+        }
+        assert.strictEqual(
+          all.length,
+          queryTest.expectedResult,
+          `Failed with query ${queryTest.queryOptions.filter} (got ${all.length} entries, expected ${queryTest.expectedResult})`
+        );
+        if (all[0] !== undefined) {
+          all.sort((a, b) => {
+            return (
+              parseInt(a.guidField.value[1], 10) -
+              parseInt(b.guidField.value[1], 10)
+            );
+          });
+          assert.strictEqual(
+            all[0].guidField.value,
+            queryTest.expectedValue,
+            `Test ${queryTest.index}: Guid value ${all[0].guidField.value} was not equal to ${queryTest.expectedValue} with query ${queryTest.queryOptions.filter}`
+          );
+        } else {
+          assert.strictEqual(
+            all[0],
+            queryTest.expectedValue,
+            `Value ${all[0]} was not equal to ${queryTest.expectedValue} with query ${queryTest.queryOptions.filter}`
+          );
+        }
+
+        testsCompleted++;
+      } catch (err) {
+        assert.fail(`Query '${queryTest.queryOptions.filter}' failed unexpectedly: ${err}`)
+      }
+    }
+    assert.strictEqual(testsCompleted, queriesAndExpectedResult.length);
+    await tableClient.deleteTable();
+  });
+
+  it("17. should work correctly when query filter single boolean and partition filter, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("partwithnot")
+    );
+
+    await tableClient.createTable();
+
+    const result1 = await tableClient.createEntity({
+      partitionKey: `Part1`,
+      rowKey: `1`,
+      foo: "testEntity1"
+    });
+    assert.notStrictEqual(result1.etag, undefined);
+
+    const result2 = await tableClient.createEntity({
+      partitionKey: `Part2`,
+      rowKey: `1`,
+      foo: "testEntity2"
+    });
+    assert.notStrictEqual(result2.etag, undefined);
+
+    const result3 = await tableClient.createEntity({
+      partitionKey: `Part3`,
+      rowKey: `1`,
+      foo: "testEntity3"
+    });
+    assert.notStrictEqual(result3.etag, undefined);
+
+    const maxPageSize = 5;
+    const entities = tableClient.listEntities<TableEntity<{ foo: string }>>({
+      queryOptions: {
+        filter: odata`not (PartitionKey lt 'Part2')`
+      }
+    });
+    let all: TableEntity<{ foo: string }>[] = [];
+    for await (const entity of entities.byPage({
+      maxPageSize
+    })) {
+      all = [...all, ...entity];
+    }
+    assert.strictEqual(all.length, 2);
+    all.forEach((entity) => {
+      assert.ok(
+        entity.partitionKey === `Part2` || entity.partitionKey === `Part3`
+      );
+    });
+
+    await tableClient.deleteTable();
+  });
+
+  it("18. should return the correct number of results querying with a boolean field regardless of capitalization, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("bool")
+    );
+    const partitionKeyForQueryTest = createUniquePartitionKey("bool");
+    const totalItems = 10;
+    await tableClient.createTable();
+    const timestamp = new Date();
+    timestamp.setDate(timestamp.getDate() + 1);
+    for (let i = 0; i < totalItems; i++) {
+      const myBool: boolean = i % 2 !== 0 ? true : false;
+      const result = await tableClient.createEntity({
+        partitionKey: partitionKeyForQueryTest,
+        rowKey: `${i}`,
+        number: i,
+        myBool
+      });
+      assert.notStrictEqual(result.etag, undefined);
+    }
+    const maxPageSize = 10;
+    let testsCompleted = 0;
+    // take note of the different whitespacing and query formatting:
+    const queriesAndExpectedResult = [
+      {
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest})and(myBool eq True )`
+        },
+        expectedResult: 5
+      },
+      {
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest}) and (myBool eq truE)`
+        },
+        expectedResult: 5
+      },
+      {
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest}) and (myBool eq FALSE)`
+        },
+        expectedResult: 5
+      },
+      {
+        queryOptions: {
+          filter: odata`(PartitionKey eq ${partitionKeyForQueryTest})and (myBool eq faLsE)`
+        },
+        expectedResult: 5
+      }
+    ];
+
+    for (const queryTest of queriesAndExpectedResult) {
+      try {
+        const entities = tableClient.listEntities<
+          TableEntity<{ number: number }>
+        >({
+          queryOptions: queryTest.queryOptions
+        });
+        let all: TableEntity<{ number: number }>[] = [];
+        for await (const entity of entities.byPage({
+          maxPageSize
+        })) {
+          all = [...all, ...entity];
+        }
+        assert.strictEqual(
+          all.length,
+          queryTest.expectedResult,
+          `Failed with query ${queryTest.queryOptions.filter}`
+        );
+        testsCompleted++;
+      } catch (err) {
+        assert.fail(`Query '${queryTest.queryOptions.filter}' failed unexpectedly: ${err}`)
+      }
+    }
+    assert.strictEqual(testsCompleted, queriesAndExpectedResult.length);
+    await tableClient.deleteTable();
+  });
+
+  it("19. should work when empty field is queried, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("emptystringfieldneq")
+    );
+
+    await tableClient.createTable();
+
+    const partitionKey = createUniquePartitionKey("");
+
+    // This should get picked up by the query
+    const result1 = await tableClient.createEntity({
+      partitionKey: partitionKey,
+      rowKey: `1`,
+      foo: "TestFoo",
+    });
+    assert.notStrictEqual(result1.etag, undefined);
+
+    // These next two entities should not
+    const result2 = await tableClient.createEntity({
+      partitionKey: partitionKey,
+      rowKey: `2`,
+      foo: "",
+    });
+    assert.notStrictEqual(result2.etag, undefined);
+
+    const result3 = await tableClient.createEntity({
+      partitionKey: partitionKey,
+      rowKey: `3`
+    });
+    assert.notStrictEqual(result3.etag, undefined);
+
+    const maxPageSize = 5;
+    const entities = tableClient.listEntities<TableEntity<{ foo: string }>>({
+      queryOptions: {
+        filter: `PartitionKey eq '${partitionKey}' and foo ne ''`
+      }
+    });
+    let all: TableEntity<{ foo: string }>[] = [];
+    for await (const entity of entities.byPage({
+      maxPageSize
+    })) {
+      all = [...all, ...entity];
+    }
+    assert.strictEqual(all.length, 1);
+  });
+
+  it("20. should work when getting special characters, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("specialcharactercheck")
+    );
+
+    await tableClient.createTable();
+
+    const partitionKey = createUniquePartitionKey("");
+
+    // Foo has some special characters
+    const result1 = await tableClient.createEntity({
+      partitionKey: partitionKey,
+      rowKey: `1`,
+      foo: "TestVal`",
+    });
+    assert.notStrictEqual(result1.etag, undefined);
+
+    const maxPageSize = 5;
+    const entities = tableClient.listEntities<TableEntity<{ foo: string }>>({
+      queryOptions: {
+        filter: `PartitionKey eq '${partitionKey}' and foo eq 'TestVal\`'`
+      }
+    });
+    let all: TableEntity<{ foo: string }>[] = [];
+    for await (const entity of entities.byPage({
+      maxPageSize
+    })) {
+      all = [...all, ...entity];
+    }
+    assert.strictEqual(all.length, 1);
+
+    await tableClient.deleteTable();
+  });
+
+  it("21. should work correctly when query filter is empty string, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("querywithbool")
+    );
+    const partitionKeyForQueryTest = createUniquePartitionKey("");
+    const totalItems = 5;
+    await tableClient.createTable();
+
+    for (let i = 0; i < totalItems; i++) {
+      const result = await tableClient.createEntity({
+        partitionKey: `${partitionKeyForQueryTest}${i}`,
+        rowKey: `${i}`,
+        foo: "testEntity"
+      });
+      assert.notStrictEqual(result.etag, undefined);
+    }
+
+    const maxPageSize = 20;
+    const entities = tableClient.listEntities<TableEntity<{ foo: string }>>({
+      queryOptions: {
+        filter: ""
+      }
+    });
+    let all: TableEntity<{ foo: string }>[] = [];
+    for await (const entity of entities.byPage({
+      maxPageSize
+    })) {
+      all = [...all, ...entity];
+    }
+    assert.strictEqual(all.length, 5);
+    await tableClient.deleteTable();
+  });
+
+  it("22. should work correctly when partition key is empty, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("emptypartitionkey")
+    );
+    await tableClient.createTable();
+
+    const partitionKey = "";
+
+    // Foo has some special characters
+    const result1 = await tableClient.createEntity({
+      partitionKey: partitionKey,
+      rowKey: `1`,
+      foo: "TestVal`",
+    });
+    assert.notStrictEqual(result1.etag, undefined);
+
+    const maxPageSize = 5;
+    const entities = tableClient.listEntities<TableEntity<{ foo: string }>>({
+      queryOptions: {
+        filter: `PartitionKey eq '' and foo eq 'TestVal\`'`
+      }
+    });
+    let all: TableEntity<{ foo: string }>[] = [];
+    for await (const entity of entities.byPage({
+      maxPageSize
+    })) {
+      all = [...all, ...entity];
+    }
+    assert.strictEqual(all.length, 1);
+
+    await tableClient.deleteTable();
+  });
+
+  it("23. should find the correct long int, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("longint")
+    );
+    const partitionKey = createUniquePartitionKey("");
+    const testEntity: TableTestEntity =
+      entityFactory.createBasicEntityForTest(partitionKey);
+
+    await tableClient.createTable({ requestOptions: { timeout: 60000 } });
+    let result = await tableClient.createEntity(testEntity);
+
+    const anotherPartitionKey = createUniquePartitionKey("");
+    const anotherEntity: TableTestEntity =
+      entityFactory.createBasicEntityForTest(anotherPartitionKey);
+    anotherEntity.int64Field = { value: "1234", type: "Int64" };
+
+    result = await tableClient.createEntity(anotherEntity);
+    assert.ok(result.etag);
+
+    for await (const entity of tableClient
+      .listEntities<TableTestEntity>({
+        queryOptions: {
+          filter: `int64Field gt 1233L and int64Field lt 1235L`
+        }
+      })) {
+      assert.deepStrictEqual(entity.int64Field, 1234n);
+    }
+
+    await tableClient.deleteTable();
+  });
+
+  it("24. should find the correct negative long int, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("longint")
+    );
+    const partitionKey = createUniquePartitionKey("");
+    const testEntity: TableTestEntity =
+      entityFactory.createBasicEntityForTest(partitionKey);
+    testEntity.int64Field = { value: "-12345", type: "Int64" };
+
+    await tableClient.createTable({ requestOptions: { timeout: 60000 } });
+    let result = await tableClient.createEntity(testEntity);
+
+    const anotherPartitionKey = createUniquePartitionKey("");
+    const anotherEntity: TableTestEntity =
+      entityFactory.createBasicEntityForTest(anotherPartitionKey);
+    anotherEntity.int64Field = { value: "-1234", type: "Int64" };
+
+    result = await tableClient.createEntity(anotherEntity);
+    assert.ok(result.etag);
+
+    for await (const entity of tableClient
+      .listEntities<TableTestEntity>({
+        queryOptions: {
+          filter: `int64Field lt -1233L and int64Field gt -1235L`
+        }
+      })) {
+      assert.deepStrictEqual(entity.int64Field, -1234n);
+    }
+
+    await tableClient.deleteTable();
+  });
+
+  it("25. should find the correct negative long int, @loki", async () => {
+    const tableClient = createAzureDataTablesClient(
+      testLocalAzuriteInstance,
+      getUniqueName("longint")
+    );
+    const partitionKey = createUniquePartitionKey("");
+    const testEntity: TableTestEntity =
+      entityFactory.createBasicEntityForTest(partitionKey);
+    testEntity.int64Field = { value: "12345", type: "Int64" };
+
+    await tableClient.createTable({ requestOptions: { timeout: 60000 } });
+    let result = await tableClient.createEntity(testEntity);
+
+    const anotherPartitionKey = createUniquePartitionKey("");
+    const anotherEntity: TableTestEntity =
+      entityFactory.createBasicEntityForTest(anotherPartitionKey);
+    anotherEntity.int64Field = { value: "-1234", type: "Int64" };
+
+    result = await tableClient.createEntity(anotherEntity);
+    assert.ok(result.etag);
+
+    let count = 0;
+
+    for await (const entity of tableClient
+      .listEntities<TableTestEntity>({
+        queryOptions: {
+          filter: `int64Field gt -1235L`
+        }
+      })) {
+      entity;
+      ++count;
+    }
+
+    assert.deepStrictEqual(count, 2);
+
     await tableClient.deleteTable();
   });
 });

@@ -87,8 +87,8 @@ export default class ServiceHandler extends BaseHandler
     const body = queueCtx.request!.getBody();
     const parsedBody = await parseXML(body || "");
     if (
-      !parsedBody.hasOwnProperty("cors") &&
-      !parsedBody.hasOwnProperty("Cors")
+      !Object.hasOwnProperty.bind(parsedBody)('cors')&&
+      !Object.hasOwnProperty.bind(parsedBody)('Cors')
     ) {
       storageServiceProperties.cors = undefined;
     }
@@ -235,7 +235,7 @@ export default class ServiceHandler extends BaseHandler
     let includeMetadata = false;
     if (options.include) {
       for (const item of options.include) {
-        if (item === "metadata") {
+        if (item.toLowerCase() === "metadata") {
           includeMetadata = true;
           break;
         }

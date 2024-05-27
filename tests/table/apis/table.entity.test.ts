@@ -1,6 +1,5 @@
 import * as assert from "assert";
 import * as Azure from "azure-storage";
-
 import { configLogger } from "../../../src/common/Logger";
 import StorageError from "../../../src/table/errors/StorageError";
 
@@ -1607,5 +1606,188 @@ describe("table Entity APIs test - using Azure-Storage", () => {
         );
       });
     });
+  });
+
+  it("36. Merge on an Entity with single quote in PartitionKey and RowKey, @loki", (done) => {
+    const partitionKey = "pk single'quota string";
+    const rowKey = "rk single'quota string";
+
+    // Insert entity with the specific pk,rk
+    const entityInsert = new TestEntity(partitionKey, rowKey, "value1");
+    tableService.insertEntity(
+      tableName,
+      entityInsert,
+      (insertError, insertResult, insertresponse) => {
+        if (insertError) {
+          assert.fail(insertError.message);
+          done();
+        } else {
+          // merge entity with the specific pk,rk, to a different value
+          const entityMerge = new TestEntity(partitionKey, rowKey, "value2");
+          tableService.mergeEntity(
+            tableName,
+            entityMerge,
+            (mergeError, updateResult, updateResponse) => {
+              if (!mergeError) {
+                assert.strictEqual(updateResponse.statusCode, 204); // Precondition succeeded
+
+                // retrieve entity with the specific pk,rk, and validate value is updated
+                tableService.retrieveEntity<TestEntity>(
+                  tableName,
+                  partitionKey,
+                  rowKey,
+                  (error, result) => {
+                    if (error) {
+                      assert.fail(error.message);
+                    } else {
+                      assert.strictEqual(result.PartitionKey._, partitionKey);
+                      assert.strictEqual(result.RowKey._, rowKey);
+                      assert.strictEqual(result.myValue._, "value2");
+                      done();
+                    }
+                  }
+                );
+              } else {
+                assert.fail(mergeError.message);
+              }
+            }
+          );
+        }
+      }
+    );
+  });
+
+  // for github issue #1536
+  it("37. Should drop etag property when inserting entity, @loki", (done) => {
+    const dropEtagPKey = getUniqueName("drop");
+    const rowKey1 = getUniqueName("rk1");
+    const entityInsert = new TestEntity(dropEtagPKey, rowKey1, "value");
+    tableService.insertEntity(
+      tableName,
+      entityInsert,
+      (insertError, insertResult, insertResponse) => {
+        if (!insertError) {
+          tableService.retrieveEntity<TestEntity>(
+            tableName,
+            entityInsert.PartitionKey._,
+            entityInsert.RowKey._,
+            (queryError, queryResult, queryResponse) => {
+              if (!queryError) {
+                assert.strictEqual(queryResponse.statusCode, 200);
+                assert.strictEqual(
+                  queryResult.myValue._,
+                  entityInsert.myValue._
+                );
+                // now add odata etag property to the entity
+                const entityWithEtag = queryResult;
+                const rowKey2 = getUniqueName("rk2");
+                entityWithEtag.RowKey._ = rowKey2;
+                (entityWithEtag as any)["odata.etag"] =
+                  "W/\"datetime'2021-06-30T00%3A00%3A00.0000000Z'\"";
+                tableService.insertEntity(
+                  tableName,
+                  entityWithEtag,
+                  (insert2Error, insert2Result, insert2Response) => {
+                    if (!insert2Error) {
+                      assert.strictEqual(insert2Response.statusCode, 201);
+                      tableService.retrieveEntity<TestEntity>(
+                        tableName,
+                        entityWithEtag.PartitionKey._,
+                        entityWithEtag.RowKey._,
+                        (query2Error, query2Result, query2Response) => {
+                          if (!query2Error && query2Result && query2Response) {
+                            assert.strictEqual(query2Response.statusCode, 200);
+                            assert.strictEqual(
+                              query2Result.myValue._,
+                              entityInsert.myValue._
+                            );
+                            assert.notDeepStrictEqual(
+                              (query2Response as any).body["odata.etag"],
+                              "W/\"datetime'2021-06-30T00%3A00%3A00.0000000Z'\"",
+                              "Etag value is not writable and should be dropped."
+                            );
+                            done();
+                          } else {
+                            assert.fail(query2Error.message);
+                          }
+                        }
+                      );
+                    }
+                  }
+                );
+              } else {
+                assert.fail(queryError.message);
+              }
+            }
+          );
+        } else {
+          assert.fail(insertError.message);
+        }
+      }
+    );
+  });
+
+  
+  // For github issue 2387
+  // Insert entity property with type "Edm.Double" and value bigger than MAX_VALUE, server will fail the request
+  it("38. Insert entity with Edm.Double type property whose value is bigger than MAX_VALUE, server will fail the request, @loki", (done) => {
+    // Double value bigger than MAX_VALUE will fail
+    const entity1 = {
+      PartitionKey: "partDouble",
+      RowKey: "utctestDouble",
+      myValue: "1.797693134862316e308",
+      "myValue@odata.type": "Edm.Double"
+    };
+
+    tableService.insertEntity(
+      tableName,
+      entity1,
+      (insertError, insertResult, insertResponse) => {
+        if (!insertError) {
+          assert.fail(
+            "Insert should fail with Edm.Double type property whose value is greater than MAX_VALUE.");
+        } else {
+          assert.strictEqual(
+            true,
+            insertError.message.startsWith(
+              "An error occurred while processing this request."
+            )
+          );
+        };
+        assert.strictEqual("InvalidInput", (insertError as any).code);
+      }
+    );
+
+    // Double value smaller than MAX_VALUE will success
+    const entity2 = {
+      PartitionKey: "partDouble",
+      RowKey: "utctestDouble",
+      myValue: "1.797693134862315e308",
+      "myValue@odata.type": "Edm.Double"
+    };
+
+    tableService.insertEntity(
+      tableName,
+      entity2,
+      (insertError, insertResult, insertResponse) => {
+        if (!insertError) {
+          tableService.retrieveEntity<TestEntity>(
+            tableName,
+            "partDouble",
+            "utctestDouble",
+            (error, result) => {
+              const insertedEntity: TestEntity = result;
+              assert.strictEqual(
+                insertedEntity.myValue._.toString(),
+                "1.797693134862315e+308"
+              );
+              done();
+            }
+          );
+        } else {
+          assert.fail(
+            "Insert should NOT fail with Edm.Double type property whose value is less than MAX_VALUE.");
+      }
+    });    
   });
 });

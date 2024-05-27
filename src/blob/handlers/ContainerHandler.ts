@@ -5,6 +5,7 @@ import { OAuthLevel } from "../../common/models";
 import IExtentStore from "../../common/persistence/IExtentStore";
 import { convertRawHeadersToMetadata, newEtag } from "../../common/utils/utils";
 import BlobStorageContext from "../context/BlobStorageContext";
+import NotImplementedError from "../errors/NotImplementedError";
 import * as Models from "../generated/artifacts/models";
 import Context from "../generated/Context";
 import IContainerHandler from "../generated/handlers/IContainerHandler";
@@ -15,7 +16,7 @@ import {
   EMULATOR_ACCOUNT_SKUNAME
 } from "../utils/constants";
 import { DEFAULT_LIST_BLOBS_MAX_RESULTS } from "../utils/constants";
-import { removeQuotationFromListBlobEtag } from "../utils/utils";
+import { getBlobTagsCount, removeQuotationFromListBlobEtag } from "../utils/utils";
 import BaseHandler from "./BaseHandler";
 import { BlobBatchHandler } from "./BlobBatchHandler";
 
@@ -28,6 +29,7 @@ import { BlobBatchHandler } from "./BlobBatchHandler";
  */
 export default class ContainerHandler extends BaseHandler
   implements IContainerHandler {
+  protected disableProductStyle?: boolean;
 
   constructor(
     private readonly accountDataStore: IAccountDataStore,
@@ -35,9 +37,11 @@ export default class ContainerHandler extends BaseHandler
     metadataStore: IBlobMetadataStore,
     extentStore: IExtentStore,
     logger: ILogger,
-    loose: boolean
+    loose: boolean,
+    disableProductStyle?: boolean
   ) {
     super(metadataStore, extentStore, logger, loose);
+    this.disableProductStyle = disableProductStyle;
   }
 
   /**
@@ -320,40 +324,51 @@ export default class ContainerHandler extends BaseHandler
     return response;
   }
 
+  public async restore(
+    options: Models.ContainerRestoreOptionalParams,
+    context: Context
+  ): Promise<Models.ContainerRestoreResponse> {
+    throw new NotImplementedError(context.contextId!);
+  }
+
   public async submitBatch(
     body: NodeJS.ReadableStream,
     contentLength: number,
     multipartContentType: string,
-    containerName: string,
     options: Models.ContainerSubmitBatchOptionalParams,
     context: Context): Promise<Models.ContainerSubmitBatchResponse> {
-      const blobServiceCtx = new BlobStorageContext(context);
-      const requestBatchBoundary = blobServiceCtx.request!.getHeader("content-type")!.split("=")[1];
+    const blobServiceCtx = new BlobStorageContext(context);
+    const requestBatchBoundary = blobServiceCtx.request!.getHeader("content-type")!.split("=")[1];
 
-      const blobBatchHandler = new BlobBatchHandler(this.accountDataStore, this.oauth,
-         this.metadataStore, this.extentStore, this.logger, this.loose);
+    const blobBatchHandler = new BlobBatchHandler(this.accountDataStore, this.oauth,
+      this.metadataStore, this.extentStore, this.logger, this.loose, this.disableProductStyle);
 
-      const responseBodyString = await blobBatchHandler.submitBatch(body,
-        requestBatchBoundary,
-        blobServiceCtx.request!.getPath(),
-        context.request!,
-        context);
+    const responseBodyString = await blobBatchHandler.submitBatch(body,
+      requestBatchBoundary,
+      blobServiceCtx.request!.getPath(),
+      context.request!,
+      context);
 
-      const responseBody = new Readable();
-      responseBody.push(responseBodyString);
-      responseBody.push(null);
+    const responseBody = new Readable();
+    responseBody.push(responseBodyString);
+    responseBody.push(null);
 
-      // No client request id defined in batch response, should refine swagger and regenerate from it.
-      // batch response succeed code should be 202 instead of 200, should refine swagger and regenerate from it.
-      const response: Models.ServiceSubmitBatchResponse = {
-        statusCode: 202,
-        requestId: context.contextId,
-        version: BLOB_API_VERSION,
-        contentType: "multipart/mixed; boundary=" + requestBatchBoundary,
-        body: responseBody
-      };
+    // No client request id defined in batch response, should refine swagger and regenerate from it.
+    // batch response succeed code should be 202 instead of 200, should refine swagger and regenerate from it.
+    const response: Models.ContainerSubmitBatchResponse = {
+      statusCode: 202,
+      requestId: context.contextId,
+      version: BLOB_API_VERSION,
+      contentType: "multipart/mixed; boundary=" + requestBatchBoundary,
+      body: responseBody
+    };
 
-      return response;
+    return response;
+  }
+
+  public async filterBlobs(options: Models.ContainerFilterBlobsOptionalParams, context: Context
+  ): Promise<Models.ContainerFilterBlobsResponse> {
+    throw new NotImplementedError(context.contextId!);
   }
 
   /**
@@ -586,10 +601,10 @@ export default class ContainerHandler extends BaseHandler
 
     const request = context.request!;
     const marker = options.marker;
-    const delimiter = "";
     options.marker = options.marker || "";
     let includeSnapshots: boolean = false;
     let includeUncommittedBlobs: boolean = false;
+    let includeTags: boolean = false;
     if (options.include !== undefined) {
       options.include.forEach(element => {
         if (Models.ListBlobsIncludeItem.Snapshots.toLowerCase() === element.toLowerCase()) {
@@ -598,8 +613,10 @@ export default class ContainerHandler extends BaseHandler
         if (Models.ListBlobsIncludeItem.Uncommittedblobs.toLowerCase() === element.toLowerCase()) {
           includeUncommittedBlobs = true;
         }
-      }
-      )
+        if (Models.ListBlobsIncludeItem.Tags.toLowerCase() === element.toLowerCase()) {
+          includeTags = true;
+        }
+      })
     }
     if (
       options.maxresults === undefined ||
@@ -633,16 +650,17 @@ export default class ContainerHandler extends BaseHandler
       prefix: options.prefix || "",
       marker: options.marker,
       maxResults: options.maxresults,
-      delimiter,
       segment: {
         blobItems: blobs.map(item => {
           return {
             ...item,
             deleted: item.deleted !== true ? undefined : true,
             snapshot: item.snapshot || undefined,
+            blobTags: includeTags ? item.blobTags : undefined,
             properties: {
               ...item.properties,
               etag: removeQuotationFromListBlobEtag(item.properties.etag),
+              tagCount: getBlobTagsCount(item.blobTags),
               accessTierInferred:
                 item.properties.accessTierInferred === true ? true : undefined
             }
@@ -686,6 +704,7 @@ export default class ContainerHandler extends BaseHandler
     options.marker = options.marker || "";
     let includeSnapshots: boolean = false;
     let includeUncommittedBlobs: boolean = false;
+    let includeTags: boolean = false;
     if (options.include !== undefined) {
       options.include.forEach(element => {
         if (Models.ListBlobsIncludeItem.Snapshots.toLowerCase() === element.toLowerCase()) {
@@ -693,6 +712,9 @@ export default class ContainerHandler extends BaseHandler
         }
         if (Models.ListBlobsIncludeItem.Uncommittedblobs.toLowerCase() === element.toLowerCase()) {
           includeUncommittedBlobs = true;
+        }
+        if (Models.ListBlobsIncludeItem.Tags.toLowerCase() === element.toLowerCase()) {
+          includeTags = true;
         }
       }
       )
@@ -737,9 +759,11 @@ export default class ContainerHandler extends BaseHandler
           return {
             ...item,
             snapshot: item.snapshot || undefined,
+            blobTags: includeTags ? item.blobTags : undefined,
             properties: {
               ...item.properties,
               etag: removeQuotationFromListBlobEtag(item.properties.etag),
+              tagCount: getBlobTagsCount(item.blobTags),
               accessTierInferred:
                 item.properties.accessTierInferred === true ? true : undefined
             }

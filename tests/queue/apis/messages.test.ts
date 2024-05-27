@@ -9,7 +9,6 @@ import {
 
 import { configLogger } from "../../../src/common/Logger";
 import { StoreDestinationArray } from "../../../src/common/persistence/IExtentStore";
-import QueueConfiguration from "../../../src/queue/QueueConfiguration";
 import Server from "../../../src/queue/QueueServer";
 import {
   EMULATOR_ACCOUNT_KEY,
@@ -18,6 +17,7 @@ import {
   rmRecursive,
   sleep
 } from "../../testutils";
+import QueueTestServerFactory from "../utils/QueueTestServerFactory";
 
 // Set true to enable debug log
 configLogger(false);
@@ -30,22 +30,13 @@ describe("Messages APIs test", () => {
   const extentDbPath = "__extentTestsStorage__";
   const persistencePath = "__queueTestsPersistence__";
 
-  const DEFUALT_QUEUE_PERSISTENCE_ARRAY: StoreDestinationArray = [
+  const DEFAULT_QUEUE_PERSISTENCE_ARRAY: StoreDestinationArray = [
     {
       locationId: "queueTest",
       locationPath: persistencePath,
       maxConcurrency: 10
     }
   ];
-
-  const config = new QueueConfiguration(
-    host,
-    port,
-    metadataDbPath,
-    extentDbPath,
-    DEFUALT_QUEUE_PERSISTENCE_ARRAY,
-    false
-  );
 
   const baseURL = `http://${host}:${port}/devstoreaccount1`;
   const serviceClient = new QueueServiceClient(
@@ -67,7 +58,11 @@ describe("Messages APIs test", () => {
   const messageContent = "Hello World";
 
   before(async () => {
-    server = new Server(config);
+    server = new QueueTestServerFactory().createServer({
+      metadataDBPath: metadataDbPath,
+      extentDBPath: extentDbPath,
+      persistencePathArray: DEFAULT_QUEUE_PERSISTENCE_ARRAY
+    });
     await server.start();
   });
 
@@ -627,5 +622,125 @@ describe("Messages APIs test", () => {
     assert.ok(errorDelete);
     
     
+  });
+
+  it("enqueue,dequeue,update message with invalid visibilitytimeout @loki", async () => {    
+    //const ttl = 2;
+    let error;
+    const eResult = await queueClient.sendMessage(messageContent);
+
+    try {
+      await queueClient.sendMessage(
+        messageContent, 
+        {
+        visibilityTimeout: 691200,
+        }
+      );
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 400);
+    assert.deepEqual(error.code, 'OutOfRangeQueryParameterValue');
+    assert.ok(
+      error.message.includes(
+        "One of the query parameters specified in the request URI is outside the permissible range."
+      )
+    );
+
+    error = undefined;
+    try {
+      await queueClient.sendMessage(
+        messageContent, 
+        {
+        visibilityTimeout: -1,
+        }
+      );
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 400);
+    assert.deepEqual(error.code, 'OutOfRangeQueryParameterValue');
+    assert.ok(
+      error.message.includes(
+        "One of the query parameters specified in the request URI is outside the permissible range."
+      )
+    );
+
+    error = undefined;
+    try {
+      await queueClient.receiveMessages({
+        visibilityTimeout: 691200,
+        numberOfMessages: 1
+      });
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 400);
+    assert.deepEqual(error.code, 'OutOfRangeQueryParameterValue');
+    assert.ok(
+      error.message.includes(
+        "One of the query parameters specified in the request URI is outside the permissible range."
+      )
+    );
+
+    error = undefined;
+    try {
+      await queueClient.receiveMessages({
+        visibilityTimeout: 0,
+        numberOfMessages: 1
+      });
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 400);
+    assert.deepEqual(error.code, 'OutOfRangeQueryParameterValue');
+    assert.ok(
+      error.message.includes(
+        "One of the query parameters specified in the request URI is outside the permissible range."
+      )
+    );
+
+    error = undefined;
+    try {
+      await queueClient.updateMessage(
+        eResult.messageId,
+        eResult.popReceipt,
+        "",
+        691200);
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 400);
+    assert.deepEqual(error.code, 'OutOfRangeQueryParameterValue');
+    assert.ok(
+      error.message.includes(
+        "One of the query parameters specified in the request URI is outside the permissible range."
+      )
+    );
+
+    error = undefined;
+    try {
+      await queueClient.updateMessage(
+        eResult.messageId,
+        eResult.popReceipt,
+        "",
+        -1);
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 400);
+    assert.deepEqual(error.code, 'OutOfRangeQueryParameterValue');
+    assert.ok(
+      error.message.includes(
+        "One of the query parameters specified in the request URI is outside the permissible range."
+      )
+    );
+
   });
 });

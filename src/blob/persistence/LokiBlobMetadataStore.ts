@@ -62,6 +62,7 @@ import IBlobMetadataStore, {
   SetContainerAccessPolicyOptions
 } from "./IBlobMetadataStore";
 import PageWithDelimiter from "./PageWithDelimiter";
+import { getBlobTagsCount, getTagsFromString } from "../utils/utils";
 
 /**
  * This is a metadata source implementation for blob based on loki DB.
@@ -104,8 +105,11 @@ export default class LokiBlobMetadataStore
 
   private readonly pageBlobRangesManager = new PageBlobRangesManager();
 
-  public constructor(public readonly lokiDBPath: string) {
-    this.db = new Loki(lokiDBPath, {
+  public constructor(public readonly lokiDBPath: string, inMemory: boolean) {
+    this.db = new Loki(lokiDBPath, inMemory ? {
+      persistenceMethod: "memory"
+    } : {
+      persistenceMethod: "fs",
       autosave: true,
       autosaveInterval: 5000
     });
@@ -1037,6 +1041,7 @@ export default class LokiBlobMetadataStore
       snapshot: snapshotTime,
       properties: { ...doc.properties },
       metadata: metadata ? { ...metadata } : { ...doc.metadata },
+      blobTags: doc.blobTags,
       accountName: doc.accountName,
       containerName: doc.containerName,
       pageRangesInOrder:
@@ -1198,6 +1203,8 @@ export default class LokiBlobMetadataStore
       context
     );
 
+    doc.properties.tagCount = getBlobTagsCount(doc.blobTags);
+
     return {
       properties: doc.properties,
       metadata: doc.metadata,
@@ -1335,7 +1342,7 @@ export default class LokiBlobMetadataStore
     leaseAccessConditions: Models.LeaseAccessConditions | undefined,
     blobHTTPHeaders: Models.BlobHTTPHeaders | undefined,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const doc = await this.getBlobWithLeaseUpdated(
       account,
@@ -1403,7 +1410,7 @@ export default class LokiBlobMetadataStore
     leaseAccessConditions: Models.LeaseAccessConditions | undefined,
     metadata: Models.BlobMetadata | undefined,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const doc = await this.getBlobWithLeaseUpdated(
       account,
@@ -1781,7 +1788,7 @@ export default class LokiBlobMetadataStore
     metadata: Models.BlobMetadata | undefined,
     tier: Models.AccessTier | undefined,
     options: Models.BlobStartCopyFromURLOptionalParams = {}
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const sourceBlob = await this.getBlobWithLeaseUpdated(
       source.account,
@@ -1802,7 +1809,7 @@ export default class LokiBlobMetadataStore
           options.sourceModifiedAccessConditions.sourceIfModifiedSince,
         ifUnmodifiedSince:
           options.sourceModifiedAccessConditions.sourceIfUnmodifiedSince,
-        ifMatch: options.sourceModifiedAccessConditions.sourceIfMatches,
+        ifMatch: options.sourceModifiedAccessConditions.sourceIfMatch,
         ifNoneMatch: options.sourceModifiedAccessConditions.sourceIfNoneMatch
       },
       sourceBlob
@@ -1912,7 +1919,8 @@ export default class LokiBlobMetadataStore
       leaseBreakTime:
         destBlob !== undefined ? destBlob.leaseBreakTime : undefined,
       committedBlocksInOrder: sourceBlob.committedBlocksInOrder,
-      persistency: sourceBlob.persistency
+      persistency: sourceBlob.persistency,      
+      blobTags: options.blobTagsString === undefined ? undefined : getTagsFromString(options.blobTagsString, context.contextId!)
     };
 
     if (
@@ -1966,7 +1974,7 @@ export default class LokiBlobMetadataStore
     metadata: Models.BlobMetadata | undefined,
     tier: Models.AccessTier | undefined,
     options: Models.BlobCopyFromURLOptionalParams = {}
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const sourceBlob = await this.getBlobWithLeaseUpdated(
       source.account,
@@ -1987,7 +1995,7 @@ export default class LokiBlobMetadataStore
           options.sourceModifiedAccessConditions.sourceIfModifiedSince,
         ifUnmodifiedSince:
           options.sourceModifiedAccessConditions.sourceIfUnmodifiedSince,
-        ifMatch: options.sourceModifiedAccessConditions.sourceIfMatches,
+        ifMatch: options.sourceModifiedAccessConditions.sourceIfMatch,
         ifNoneMatch: options.sourceModifiedAccessConditions.sourceIfNoneMatch
       },
       sourceBlob
@@ -2098,7 +2106,8 @@ export default class LokiBlobMetadataStore
       leaseBreakTime:
         destBlob !== undefined ? destBlob.leaseBreakTime : undefined,
       committedBlocksInOrder: sourceBlob.committedBlocksInOrder,
-      persistency: sourceBlob.persistency
+      persistency: sourceBlob.persistency,      
+      blobTags: options.blobTagsString === undefined ? undefined : getTagsFromString(options.blobTagsString, context.contextId!)
     };
 
     if (
@@ -2178,7 +2187,8 @@ export default class LokiBlobMetadataStore
     if (
       (tier === Models.AccessTier.Archive ||
         tier === Models.AccessTier.Cool ||
-        tier === Models.AccessTier.Hot) &&
+        tier === Models.AccessTier.Hot ||
+        tier === Models.AccessTier.Cold) &&
       doc.properties.blobType === Models.BlobType.BlockBlob
     ) {
       // Block blob
@@ -2188,7 +2198,7 @@ export default class LokiBlobMetadataStore
       // Archive -> Coo/Hot will return 202
       if (
         doc.properties.accessTier === Models.AccessTier.Archive &&
-        (tier === Models.AccessTier.Cool || tier === Models.AccessTier.Hot)
+        (tier === Models.AccessTier.Cool || tier === Models.AccessTier.Hot || tier === Models.AccessTier.Cold)
       ) {
         responseCode = 202;
       }
@@ -2307,7 +2317,7 @@ export default class LokiBlobMetadataStore
     leaseAccessConditions: Models.LeaseAccessConditions = {},
     modifiedAccessConditions: Models.ModifiedAccessConditions = {},
     appendPositionAccessConditions: Models.AppendPositionAccessConditions = {}
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const doc = await this.getBlobWithLeaseUpdated(
       block.accountName,
       block.containerName,
@@ -2505,6 +2515,7 @@ export default class LokiBlobMetadataStore
       doc.properties.contentEncoding = blob.properties.contentEncoding;
       doc.properties.contentLanguage = blob.properties.contentLanguage;
       doc.properties.contentDisposition = blob.properties.contentDisposition;
+      doc.blobTags = blob.blobTags;
       doc.properties.contentLength = selectedBlockList
         .map((block) => block.size)
         .reduce((total, val) => {
@@ -2559,7 +2570,7 @@ export default class LokiBlobMetadataStore
     isCommitted: boolean | undefined,
     leaseAccessConditions: Models.LeaseAccessConditions | undefined
   ): Promise<{
-    properties: Models.BlobProperties;
+    properties: Models.BlobPropertiesInternal;
     uncommittedBlocks: Models.Block[];
     committedBlocks: Models.Block[];
   }> {
@@ -2581,7 +2592,7 @@ export default class LokiBlobMetadataStore
     }
 
     const res: {
-      properties: Models.BlobProperties;
+      properties: Models.BlobPropertiesInternal;
       uncommittedBlocks: Models.Block[];
       committedBlocks: Models.Block[];
     } = {
@@ -2637,7 +2648,7 @@ export default class LokiBlobMetadataStore
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions,
     sequenceNumberAccessConditions?: Models.SequenceNumberAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const doc = await this.getBlobWithLeaseUpdated(
       blob.accountName,
@@ -2706,7 +2717,7 @@ export default class LokiBlobMetadataStore
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions,
     sequenceNumberAccessConditions?: Models.SequenceNumberAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const doc = await this.getBlobWithLeaseUpdated(
       blob.accountName,
@@ -2824,7 +2835,7 @@ export default class LokiBlobMetadataStore
     blobContentLength: number,
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const doc = await this.getBlobWithLeaseUpdated(
       account,
@@ -2895,7 +2906,7 @@ export default class LokiBlobMetadataStore
     blobSequenceNumber: number | undefined,
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     const coll = this.db.getCollection(this.BLOBS_COLLECTION);
     const doc = await this.getBlobWithLeaseUpdated(
       account,
@@ -3300,6 +3311,97 @@ export default class LokiBlobMetadataStore
   }
 
   /**
+   * Set blob tags.
+   *
+   * @param {Context} context
+   * @param {string} account
+   * @param {string} container
+   * @param {string} blob
+   * @param {(string | undefined)} snapshot
+   * @param {(Models.LeaseAccessConditions | undefined)} leaseAccessConditions
+   * @param {(Models.BlobTags | undefined)} tags
+   * @param {Models.ModifiedAccessConditions} [modifiedAccessConditions]
+   * @returns {Promise<void>}
+   * @memberof LokiBlobMetadataStore
+   */
+  public async setBlobTag(
+    context: Context,
+    account: string,
+    container: string,
+    blob: string,
+    snapshot: string | undefined,
+    leaseAccessConditions: Models.LeaseAccessConditions | undefined,
+    tags: Models.BlobTags | undefined,
+    modifiedAccessConditions?: Models.ModifiedAccessConditions
+  ): Promise<void> {
+    const coll = this.db.getCollection(this.BLOBS_COLLECTION);
+    const doc = await this.getBlobWithLeaseUpdated(
+      account,
+      container,
+      blob,
+      snapshot,
+      context,
+      false,
+      true
+    );
+
+    if (!doc) {
+      throw StorageErrorFactory.getBlobNotFound(context.contextId);
+    }
+
+    const lease = new BlobLeaseAdapter(doc);
+    new BlobWriteLeaseValidator(leaseAccessConditions).validate(lease, context);
+    new BlobWriteLeaseSyncer(doc).sync(lease);
+    doc.blobTags = tags;
+    coll.update(doc);
+  }
+
+  /**
+   * Get blob tags.
+   *
+   * @param {Context} context
+   * @param {string} account
+   * @param {string} container
+   * @param {string} blob
+   * @param {(string | undefined)} snapshot
+   * @param {(Models.LeaseAccessConditions | undefined)} leaseAccessConditions
+   * @param {Models.ModifiedAccessConditions} [modifiedAccessConditions]
+   * @returns {Promise<BlobTags | undefined>}
+   * @memberof LokiBlobMetadataStore
+   */
+  public async getBlobTag(
+    context: Context,
+    account: string,
+    container: string,
+    blob: string,
+    snapshot: string = "",
+    leaseAccessConditions: Models.LeaseAccessConditions | undefined,
+    modifiedAccessConditions?: Models.ModifiedAccessConditions
+  ): Promise<Models.BlobTags | undefined> {
+    const doc = await this.getBlobWithLeaseUpdated(
+      account,
+      container,
+      blob,
+      snapshot,
+      context,
+      false,
+      true
+    );
+
+    // When block blob don't have commited block, should return 404
+    if (!doc) {
+      throw StorageErrorFactory.getBlobNotFound(context.contextId);
+    }
+
+    new BlobReadLeaseValidator(leaseAccessConditions).validate(
+      new BlobLeaseAdapter(doc),
+      context
+    );
+
+    return doc.blobTags;
+  }
+
+  /**
    * Get the tier setting from request headers.
    *
    * @private
@@ -3317,6 +3419,9 @@ export default class LokiBlobMetadataStore
     }
     if (tier === Models.AccessTier.Archive.toLowerCase()) {
       return Models.AccessTier.Archive;
+    }
+    if (tier === Models.AccessTier.Cold.toLowerCase()) {
+      return Models.AccessTier.Cold;
     }
     return undefined;
   }

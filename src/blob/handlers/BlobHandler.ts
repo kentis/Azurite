@@ -27,7 +27,9 @@ import {
 } from "../utils/constants";
 import {
   deserializePageBlobRangeHeader,
-  deserializeRangeHeader
+  deserializeRangeHeader,
+  getBlobTagsCount,
+  validateBlobTag
 } from "../utils/utils";
 import BaseHandler from "./BaseHandler";
 import IPageBlobRangesManager from "./IPageBlobRangesManager";
@@ -49,28 +51,6 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     private readonly rangesManager: IPageBlobRangesManager
   ) {
     super(metadataStore, extentStore, logger, loose);
-  }
-
-  public setAccessControl(
-    options: Models.BlobSetAccessControlOptionalParams,
-    context: Context
-  ): Promise<Models.BlobSetAccessControlResponse> {
-    throw new NotImplementedError(context.contextId);
-  }
-
-  public getAccessControl(
-    options: Models.BlobGetAccessControlOptionalParams,
-    context: Context
-  ): Promise<Models.BlobGetAccessControlResponse> {
-    throw new NotImplementedError(context.contextId);
-  }
-
-  public rename(
-    renameSource: string,
-    options: Models.BlobRenameOptionalParams,
-    context: Context
-  ): Promise<Models.BlobRenameResponse> {
-    throw new NotImplementedError(context.contextId);
   }
 
   /**
@@ -142,38 +122,39 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
 
     const response: Models.BlobGetPropertiesResponse = againstMetadata
       ? {
-          statusCode: 200,
-          metadata: res.metadata,
-          eTag: res.properties.etag,
-          requestId: context.contextId,
-          version: BLOB_API_VERSION,
-          date: context.startTime,
-          clientRequestId: options.requestId,
-          contentLength: res.properties.contentLength,
-          lastModified: res.properties.lastModified
-        }
+        statusCode: 200,
+        metadata: res.metadata,
+        eTag: res.properties.etag,
+        requestId: context.contextId,
+        version: BLOB_API_VERSION,
+        date: context.startTime,
+        clientRequestId: options.requestId,
+        contentLength: res.properties.contentLength,
+        lastModified: res.properties.lastModified
+      }
       : {
-          statusCode: 200,
-          metadata: res.metadata,
-          isIncrementalCopy: res.properties.incrementalCopy,
-          eTag: res.properties.etag,
-          requestId: context.contextId,
-          version: BLOB_API_VERSION,
-          date: context.startTime,
-          acceptRanges: "bytes",
-          blobCommittedBlockCount:
-            res.properties.blobType === Models.BlobType.AppendBlob
-              ? res.blobCommittedBlockCount
-              : undefined,
-          isServerEncrypted: true,
-          clientRequestId: options.requestId,
-          ...res.properties,
-          cacheControl: context.request!.getQuery("rscc") ?? res.properties.cacheControl,
-          contentDisposition: context.request!.getQuery("rscd") ?? res.properties.contentDisposition,
-          contentEncoding: context.request!.getQuery("rsce") ?? res.properties.contentEncoding,
-          contentLanguage: context.request!.getQuery("rscl") ?? res.properties.contentLanguage,
-          contentType: context.request!.getQuery("rsct") ?? res.properties.contentType,
-        };
+        statusCode: 200,
+        metadata: res.metadata,
+        isIncrementalCopy: res.properties.incrementalCopy,
+        eTag: res.properties.etag,
+        requestId: context.contextId,
+        version: BLOB_API_VERSION,
+        date: context.startTime,
+        acceptRanges: "bytes",
+        blobCommittedBlockCount:
+          res.properties.blobType === Models.BlobType.AppendBlob
+            ? res.blobCommittedBlockCount
+            : undefined,
+        isServerEncrypted: true,
+        clientRequestId: options.requestId,
+        ...res.properties,
+        cacheControl: context.request!.getQuery("rscc") ?? res.properties.cacheControl,
+        contentDisposition: context.request!.getQuery("rscd") ?? res.properties.contentDisposition,
+        contentEncoding: context.request!.getQuery("rsce") ?? res.properties.contentEncoding,
+        contentLanguage: context.request!.getQuery("rscl") ?? res.properties.contentLanguage,
+        contentType: context.request!.getQuery("rsct") ?? res.properties.contentType,
+        tagCount: res.properties.tagCount,
+      };
 
     return response;
   }
@@ -207,7 +188,8 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
       requestId: context.contextId,
       date: context.startTime,
       version: BLOB_API_VERSION,
-      clientRequestId: options.requestId
+      clientRequestId: options.requestId,
+      deleteTypePermanent: true
     };
 
     return response;
@@ -225,6 +207,14 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     options: Models.BlobUndeleteOptionalParams,
     context: Context
   ): Promise<Models.BlobUndeleteResponse> {
+    throw new NotImplementedError(context.contextId);
+  }
+
+  public async setExpiry(
+    expiryOptions: Models.BlobExpiryOptions,
+    options: Models.BlobSetExpiryOptionalParams,
+    context: Context
+  ): Promise<Models.BlobSetExpiryResponse> {
     throw new NotImplementedError(context.contextId);
   }
 
@@ -296,6 +286,28 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     return response;
   }
 
+  public async setImmutabilityPolicy(
+    options: Models.BlobSetImmutabilityPolicyOptionalParams,
+    context: Context
+  ): Promise<Models.BlobSetImmutabilityPolicyResponse> {
+    throw new NotImplementedError(context.contextId);
+  }
+
+  public async deleteImmutabilityPolicy(
+    options: Models.BlobDeleteImmutabilityPolicyOptionalParams,
+    context: Context
+  ): Promise<Models.BlobDeleteImmutabilityPolicyResponse> {
+    throw new NotImplementedError(context.contextId);
+  }
+
+  public async setLegalHold(
+    legalHold: boolean,
+    options: Models.BlobSetLegalHoldOptionalParams,
+    context: Context
+  ): Promise<Models.BlobSetLegalHoldResponse> {
+    throw new NotImplementedError(context.contextId);
+  }
+
   /**
    * Set Metadata.
    *
@@ -317,6 +329,14 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     const metadata = convertRawHeadersToMetadata(
       blobCtx.request!.getRawHeaders()
     );
+
+    if (metadata != undefined) {
+      Object.entries(metadata).forEach(([key, value]) => {
+        if (key.includes("-")) {
+          throw StorageErrorFactory.getInvalidMetadata(context.contextId!);
+        }
+      });
+    }
 
     const res = await this.metadataStore.setBlobMetadata(
       context,
@@ -626,7 +646,7 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     const blob = blobCtx.blob!;
 
     // TODO: Check dest Lease status, and set to available if it's expired, see sample in BlobHandler.setMetadata()
-    const url = new URL(copySource);
+    const url = this.NewUriFromCopySource(copySource, context);
     const [
       sourceAccount,
       sourceContainer,
@@ -642,7 +662,8 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
       throw StorageErrorFactory.getBlobNotFound(context.contextId!);
     }
 
-    if (sourceAccount !== blobCtx.account) {
+    const sig = url.searchParams.get("sig");
+    if ((sourceAccount !== blobCtx.account) || (sig !== null)) {
       await this.validateCopySource(copySource, sourceAccount, context);
     }
 
@@ -687,7 +708,7 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     const blobCtx = new BlobStorageContext(context);
 
     const currentServer = blobCtx.request!.getHeader("Host") || "";
-    const url = new URL(copySource)
+    const url = this.NewUriFromCopySource(copySource, context);
     if (currentServer !== url.host) {
       this.logger.error(
         `BlobHandler:startCopyFromURL() Source account ${url} is not on the same Azurite instance as target account ${blobCtx.account}`,
@@ -824,7 +845,7 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
     const blob = blobCtx.blob!;
 
     // TODO: Check dest Lease status, and set to available if it's expired, see sample in BlobHandler.setMetadata()
-    const url = new URL(copySource);
+    const url = this.NewUriFromCopySource(copySource, context);
     const [
       sourceAccount,
       sourceContainer,
@@ -1078,9 +1099,10 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
       contentLength,
       contentRange,
       contentMD5,
+      tagCount: getBlobTagsCount(blob.blobTags),
       isServerEncrypted: true,
       clientRequestId: options.requestId,
-      creationTime:blob.properties.creationTime,
+      creationTime: blob.properties.creationTime,
       blobCommittedBlockCount:
         blob.properties.blobType === Models.BlobType.AppendBlob
           ? (blob.committedBlocksInOrder || []).length
@@ -1153,9 +1175,9 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
       contentLength <= 0
         ? []
         : this.rangesManager.fillZeroRanges(blob.pageRangesInOrder, {
-            start: rangeStart,
-            end: rangeEnd
-          });
+          start: rangeStart,
+          end: rangeEnd
+        });
 
     const bodyGetter = async () => {
       return this.extentStore.readExtents(
@@ -1208,11 +1230,102 @@ export default class BlobHandler extends BaseHandler implements IBlobHandler {
       contentRange,
       contentMD5,
       blobContentMD5: blob.properties.contentMD5,
+      tagCount: getBlobTagsCount(blob.blobTags),
       isServerEncrypted: true,
-      creationTime:blob.properties.creationTime,
+      creationTime: blob.properties.creationTime,
       clientRequestId: options.requestId
     };
 
     return response;
+  }
+
+  public async query(
+    options: Models.BlobQueryOptionalParams,
+    context: Context
+  ): Promise<Models.BlobQueryResponse> {
+    throw new NotImplementedError(context.contextId);
+  }
+
+  public async getTags(
+    options: Models.BlobGetTagsOptionalParams,
+    context: Context
+  ): Promise<Models.BlobGetTagsResponse> {
+    const blobCtx = new BlobStorageContext(context);
+    const account = blobCtx.account!;
+    const container = blobCtx.container!;
+    const blob = blobCtx.blob!;
+    const tags = await this.metadataStore.getBlobTag(
+      context,
+      account,
+      container,
+      blob,
+      options.snapshot,
+      options.leaseAccessConditions,
+      options.modifiedAccessConditions
+    );
+
+    const response: Models.BlobGetTagsResponse = {
+      statusCode: 200,
+      blobTagSet: tags === undefined ? [] : tags.blobTagSet,
+      requestId: context.contextId,
+      version: BLOB_API_VERSION,
+      date: context.startTime,
+      clientRequestId: options.requestId,
+    };
+
+    return response;
+  }
+
+  public async setTags(
+    options: Models.BlobSetTagsOptionalParams,
+    context: Context
+  ): Promise<Models.BlobSetTagsResponse> {
+    const blobCtx = new BlobStorageContext(context);
+    const account = blobCtx.account!;
+    const container = blobCtx.container!;
+    const blob = blobCtx.blob!;
+
+    // Blob Tags need to set
+    const tags = options.tags;
+    validateBlobTag(tags!, context.contextId!);
+
+    // Get snapshot (swagger not defined snapshot as parameter, but server support set tag on blob snapshot)
+    let snapshot = context.request!.getQuery("snapshot");
+
+    await this.metadataStore.setBlobTag(
+      context,
+      account,
+      container,
+      blob,
+      snapshot,
+      options.leaseAccessConditions,
+      tags,
+      options.modifiedAccessConditions
+    );
+
+    const response: Models.BlobSetTagsResponse = {
+      statusCode: 204,
+      requestId: context.contextId,
+      date: context.startTime,
+      version: BLOB_API_VERSION,
+      clientRequestId: options.requestId
+    };
+
+    return response;
+  }
+
+  private NewUriFromCopySource(copySource: string, context: Context): URL {
+    try {
+      return new URL(copySource)
+    }
+    catch
+    {
+      throw StorageErrorFactory.getInvalidHeaderValue(
+        context.contextId,
+        {
+          HeaderName: "x-ms-copy-source",
+          HeaderValue: copySource
+        })
+    }
   }
 }

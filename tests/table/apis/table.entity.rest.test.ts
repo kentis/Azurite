@@ -7,7 +7,6 @@
 import * as assert from "assert";
 import { AxiosResponse } from "axios";
 import { configLogger } from "../../../src/common/Logger";
-import TableConfiguration from "../../../src/table/TableConfiguration";
 import TableServer from "../../../src/table/TableServer";
 import { getUniqueName } from "../../testutils";
 import { createUniquePartitionKey } from "../utils/table.entity.test.utils";
@@ -19,35 +18,26 @@ import {
   postToAzurite,
   putToAzurite
 } from "../utils/table.entity.tests.rest.submitter";
+import TableTestServerFactory from "../utils/TableTestServerFactory";
 
 // Set true to enable debug log
 configLogger(false);
 
 describe("table Entity APIs REST tests", () => {
-  // TODO: Create a server factory as tests utils
-  const host = "127.0.0.1";
-  const port = 11002;
-  const metadataDbPath = "__tableTestsStorage__";
-  const enableDebugLog: boolean = true;
-  const debugLogPath: string = "";
-  const config = new TableConfiguration(
-    host,
-    port,
-    metadataDbPath,
-    enableDebugLog,
-    false,
-    undefined,
-    debugLogPath,
-    false,
-    true
-  );
 
   let server: TableServer;
 
   let reproFlowsTableName: string = getUniqueName("flows");
 
   before(async () => {
-    server = new TableServer(config);
+    server = new TableTestServerFactory().createServer({
+      metadataDBPath: "__tableTestsStorage__",
+      enableDebugLog: true,
+      debugLogFilePath: "",
+      loose: false,
+      skipApiVersionCheck: true,
+      https: false
+    });
     await server.start();
   });
 
@@ -313,7 +303,8 @@ describe("table Entity APIs REST tests", () => {
     assert.strictEqual(weMerged, 1);
   });
 
-  it("Should not be able to use query enties in a batch request, @loki", async () => {
+  // the logic tests that we pass from batch to the query handler which was added as functionality later
+  it("Should be able to use query enties in a batch request, @loki", async () => {
     const body = JSON.stringify({
       TableName: reproFlowsTableName
     });
@@ -328,7 +319,7 @@ describe("table Entity APIs REST tests", () => {
     );
     assert.strictEqual(createTableResult.status, 201);
 
-    const batchWithQueryRequestString = `--batch_f351702c-c8c8-48c6-af2c-91b809c651ce\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\nGET http://127.0.0.1:10002/devstoreaccount1/${reproFlowsTableName}()? HTTP/1.1\r\nAccept: application/json;odata=minimalmetadata\r\n--batch_f351702c-c8c8-48c6-af2c-91b809c651ce--\r\n`;
+    const batchWithQueryRequestString = `--batch_f351702c-c8c8-48c6-af2c-91b809c651ce\r\nContent-Type: application/http\r\nContent-Transfer-Encoding: binary\r\n\r\nGET http://127.0.0.1:10002/devstoreaccount1/${reproFlowsTableName}(PartitionKey='Channel_19',RowKey='2')? HTTP/1.1\r\nAccept: application/json;odata=minimalmetadata\r\n--batch_f351702c-c8c8-48c6-af2c-91b809c651ce--\r\n`;
 
     const queryRequestResult = await postToAzurite(
       `$batch`,
@@ -345,14 +336,14 @@ describe("table Entity APIs REST tests", () => {
     );
 
     assert.strictEqual(queryRequestResult.status, 202);
-    // we expect this to fail, as we are using query entities inside the batch
-    const notImplemented = queryRequestResult.data.match(
-      "The requested operation is not implemented"
+    // we expect this to fail, as we do not create the entities first
+    const notExist = queryRequestResult.data.match(
+      "0:The specified resource does not exist."
     ).length;
     assert.strictEqual(
-      notImplemented,
+      notExist,
       1,
-      "We did not get the expected NotImplemented error."
+      "We did not get the expected non-existent error."
     );
   });
 

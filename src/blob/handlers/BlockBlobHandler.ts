@@ -14,6 +14,7 @@ import { parseXML } from "../generated/utils/xml";
 import { BlobModel, BlockModel } from "../persistence/IBlobMetadataStore";
 import { BLOB_API_VERSION } from "../utils/constants";
 import BaseHandler from "./BaseHandler";
+import { getTagsFromString } from "../utils/utils";
 
 /**
  * BlobHandler handles Azure Storage BlockBlob related requests.
@@ -121,7 +122,8 @@ export default class BlockBlobHandler
       },
       snapshot: "",
       isCommitted: true,
-      persistency
+      persistency,
+      blobTags: options.blobTagsString === undefined ? undefined : getTagsFromString(options.blobTagsString, context.contextId!),
     };
 
     if (options.tier !== undefined) {
@@ -132,6 +134,7 @@ export default class BlockBlobHandler
           HeaderValue: `${options.tier}`
         });
       }
+      blob.properties.accessTierInferred = false;
     }
     // TODO: Need a lock for multi keys including containerName and blobName
     // TODO: Provide a specified function.
@@ -157,6 +160,11 @@ export default class BlockBlobHandler
     return response;
   }
 
+  public async putBlobFromUrl(contentLength: number, copySource: string, options: Models.BlockBlobPutBlobFromUrlOptionalParams, context: Context
+    ): Promise<Models.BlockBlobPutBlobFromUrlResponse> {
+    throw new NotImplementedError(context.contextId);
+    }
+
   public async stageBlock(
     blockId: string,
     contentLength: number,
@@ -170,9 +178,11 @@ export default class BlockBlobHandler
     const blobName = blobCtx.blob!;
     const date = blobCtx.startTime!;
 
-    options.blobHTTPHeaders = options.blobHTTPHeaders || {};
+    // stageBlock operation doesn't have blobHTTPHeaders
+    // https://learn.microsoft.com/en-us/rest/api/storageservices/put-block
+    // options.blobHTTPHeaders = options.blobHTTPHeaders || {};
     const contentMD5 = context.request!.getHeader("content-md5")
-      ? options.blobHTTPHeaders.blobContentMD5 ||
+      ? options.transactionalContentMD5 ||
         context.request!.getHeader("content-md5")
       : undefined;
 
@@ -288,7 +298,14 @@ export default class BlockBlobHandler
     if (rawBody === undefined) {
       throw badRequestError;
     }
-    const parsed = await parseXML(rawBody, true);
+
+    let parsed;
+    try {
+      parsed = await parseXML(rawBody, true);
+    } catch (err) {
+      // return the 400(InvalidXmlDocument) error for issue 1955
+      throw StorageErrorFactory.getInvaidXmlDocument(context.contextId);
+    }
 
     // Validate selected block list
     const commitBlockList = [];
@@ -315,7 +332,8 @@ export default class BlockBlobHandler
       accountName,
       containerName,
       name: blobName,
-      snapshot: "",
+      snapshot: "",      
+      blobTags: options.blobTagsString === undefined ? undefined : getTagsFromString(options.blobTagsString, context.contextId!),
       properties: {
         lastModified: context.startTime!,
         creationTime: context.startTime!,
@@ -455,6 +473,9 @@ export default class BlockBlobHandler
     }
     if (tier === Models.AccessTier.Archive.toLowerCase()) {
       return Models.AccessTier.Archive;
+    }
+    if (tier === Models.AccessTier.Cold.toLowerCase()) {
+      return Models.AccessTier.Cold;
     }
     return undefined;
   }

@@ -17,7 +17,6 @@ import {
 
 import { configLogger } from "../../src/common/Logger";
 import { StoreDestinationArray } from "../../src/common/persistence/IExtentStore";
-import QueueConfiguration from "../../src/queue/QueueConfiguration";
 import Server from "../../src/queue/QueueServer";
 import {
   EMULATOR_ACCOUNT_KEY,
@@ -26,6 +25,7 @@ import {
   rmRecursive,
   sleep
 } from "../testutils";
+import QueueTestServerFactory from "./utils/QueueTestServerFactory";
 
 // Set true to enable debug log
 configLogger(false);
@@ -38,22 +38,13 @@ describe("Queue SAS test", () => {
   const extentDbPath = "__extentTestsStorage__";
   const persistencePath = "__queueTestsPersistence__";
 
-  const DEFUALT_QUEUE_PERSISTENCE_ARRAY: StoreDestinationArray = [
+  const DEFAULT_QUEUE_PERSISTENCE_ARRAY: StoreDestinationArray = [
     {
       locationId: "queueTest",
       locationPath: persistencePath,
       maxConcurrency: 10
     }
   ];
-
-  const config = new QueueConfiguration(
-    host,
-    port,
-    metadataDbPath,
-    extentDbPath,
-    DEFUALT_QUEUE_PERSISTENCE_ARRAY,
-    false
-  );
 
   const baseURL = `http://${host}:${port}/devstoreaccount1`;
   const serviceClient = new QueueServiceClient(
@@ -72,7 +63,11 @@ describe("Queue SAS test", () => {
   let server: Server;
 
   before(async () => {
-    server = new Server(config);
+    server = new QueueTestServerFactory().createServer({
+      metadataDBPath: metadataDbPath,
+      extentDBPath: extentDbPath,
+      persistencePathArray: DEFAULT_QUEUE_PERSISTENCE_ARRAY
+    });
     await server.start();
   });
 
@@ -221,6 +216,43 @@ describe("Queue SAS test", () => {
     }
     assert.ok(error);
     assert.deepEqual(error.statusCode, 403);
+  });
+
+  it("generateAccountSASQueryParameters should not work with invalid signature @loki", async () => {
+    const tmr = new Date();
+    tmr.setDate(tmr.getDate() + 1);
+
+    // By default, credential is always the last element of pipeline factories
+    const factories = (serviceClient as any).pipeline.factories;
+    const storageSharedKeyCredential = factories[factories.length - 1];
+
+    let sas = generateAccountSASQueryParameters(
+      {
+        expiresOn: tmr,
+        permissions: AccountSASPermissions.parse("rwdlacup"),
+        resourceTypes: AccountSASResourceTypes.parse("sco").toString(),
+        services: AccountSASServices.parse("btqf").toString()
+      },
+      storageSharedKeyCredential as StorageSharedKeyCredential
+    ).toString();
+    sas = sas + "1";
+
+    const sasURL = `${serviceClient.url}?${sas}`;
+    const serviceClientWithSAS = new QueueServiceClient(
+      sasURL,
+      newPipeline(new AnonymousCredential())
+    );
+
+    let error;
+    try {
+      await serviceClientWithSAS.getProperties();
+    } catch (err) {
+      error = err;
+    }
+
+    assert.ok(error);
+    assert.deepEqual(error.statusCode, 403);
+    assert.deepEqual(error.code, 'AuthenticationFailed');
   });
 
   it("Create queue should work with write (w) or create (c) permission in account SAS @loki", async () => {

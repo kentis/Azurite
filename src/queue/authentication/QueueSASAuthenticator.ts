@@ -61,9 +61,8 @@ export default class QueueSASAuthenticator implements IAuthenticator {
     // TODO: Make following async
     const accountProperties = this.accountDataStore.getAccount(account);
     if (accountProperties === undefined) {
-      throw StorageErrorFactory.getInvalidOperation(
-        context.contextID!,
-        "Invalid storage account."
+      throw StorageErrorFactory.ResourceNotFound(
+        context.contextID!
       );
     }
     this.logger.debug(
@@ -155,7 +154,7 @@ export default class QueueSASAuthenticator implements IAuthenticator {
         context.contextID!
       );
 
-      const sig2Pass = sig2 !== signature;
+      const sig2Pass = sig2 === signature;
       this.logger.info(
         `QueueSASAuthenticator:validate() Signature based on key2 validation ${
           sig2Pass ? "passed" : "failed"

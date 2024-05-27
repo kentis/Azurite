@@ -56,7 +56,7 @@ export default class BlobRequestListenerFactory
     private readonly skipApiVersionCheck?: boolean,
     private readonly oauth?: OAuthLevel,
     private readonly disableProductStyleUrl?: boolean
-  ) {}
+  ) { }
 
   public createRequestListener(): RequestListener {
     const app = express().disable("x-powered-by");
@@ -97,7 +97,8 @@ export default class BlobRequestListenerFactory
         this.metadataStore,
         this.extentStore,
         logger,
-        loose
+        loose,
+        this.disableProductStyleUrl
       ),
       pageBlobHandler: new PageBlobHandler(
         this.metadataStore,
@@ -112,9 +113,9 @@ export default class BlobRequestListenerFactory
         this.metadataStore,
         this.extentStore,
         logger,
-        loose
-      ),
-      directoryHandler: {} as any
+        loose,
+        this.disableProductStyleUrl
+      )
     };
 
     // CORS request handling, preflight request and the corresponding actual request

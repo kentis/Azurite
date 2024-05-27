@@ -7,6 +7,7 @@ import { parseXML } from "../generated/utils/xml";
 import {
   BLOB_API_VERSION,
   DEFAULT_LIST_CONTAINERS_MAX_RESULTS,
+  EMULATOR_ACCOUNT_ISHIERARCHICALNAMESPACEENABLED,
   EMULATOR_ACCOUNT_KIND,
   EMULATOR_ACCOUNT_SKUNAME,
   HeaderConstants,
@@ -22,6 +23,7 @@ import { OAuthLevel } from "../../common/models";
 import { BEARER_TOKEN_PREFIX } from "../../common/utils/constants";
 import { decode } from "jsonwebtoken";
 import { getUserDelegationKeyValue } from "../utils/utils";
+import NotImplementedError from "../errors/NotImplementedError";
 
 /**
  * ServiceHandler handles Azure Storage Blob service related requests.
@@ -32,17 +34,20 @@ import { getUserDelegationKeyValue } from "../utils/utils";
  */
 export default class ServiceHandler extends BaseHandler
   implements IServiceHandler {
+  protected disableProductStyle?: boolean;
 
   constructor(
-      private readonly accountDataStore: IAccountDataStore,
-      private readonly oauth: OAuthLevel | undefined,
-      metadataStore: IBlobMetadataStore,
-      extentStore: IExtentStore,
-      logger: ILogger,
-      loose: boolean
-    ) {
-      super(metadataStore, extentStore, logger, loose);
-    }
+    private readonly accountDataStore: IAccountDataStore,
+    private readonly oauth: OAuthLevel | undefined,
+    metadataStore: IBlobMetadataStore,
+    extentStore: IExtentStore,
+    logger: ILogger,
+    loose: boolean,
+    disableProductStyle?: boolean
+  ) {
+    super(metadataStore, extentStore, logger, loose);
+    this.disableProductStyle = disableProductStyle;
+  }
   /**
    * Default service properties.
    *
@@ -124,7 +129,7 @@ export default class ServiceHandler extends BaseHandler
     const requestBatchBoundary = blobServiceCtx.request!.getHeader("content-type")!.split("=")[1];
 
     const blobBatchHandler = new BlobBatchHandler(this.accountDataStore, this.oauth,
-       this.metadataStore, this.extentStore, this.logger, this.loose);
+      this.metadataStore, this.extentStore, this.logger, this.loose, this.disableProductStyle);
 
     const responseBodyString = await blobBatchHandler.submitBatch(body,
       requestBatchBoundary,
@@ -171,8 +176,8 @@ export default class ServiceHandler extends BaseHandler
     const body = blobCtx.request!.getBody();
     const parsedBody = await parseXML(body || "");
     if (
-      !parsedBody.hasOwnProperty("cors") &&
-      !parsedBody.hasOwnProperty("Cors")
+      !Object.hasOwnProperty.bind(parsedBody)('cors') &&
+      !Object.hasOwnProperty.bind(parsedBody)('Cors')
     ) {
       storageServiceProperties.cors = undefined;
     }
@@ -314,6 +319,21 @@ export default class ServiceHandler extends BaseHandler
       marker
     );
 
+    // Only the query parameter "include" contains the value "metadata" can the result present the metadata.
+    let includeMetadata = false;
+    if (options.include) {
+      for (const item of options.include) {
+        if (item.toLowerCase() === "metadata") {
+          includeMetadata = true;
+          break;
+        }
+      }
+    }
+    if (!includeMetadata) {
+      for (const container of containers[0]) {
+        container.metadata = undefined;
+      }
+    }
     // TODO: Need update list out container lease properties with ContainerHandler.updateLeaseAttributes()
     const serviceEndpoint = `${request.getEndpoint()}/${accountName}`;
     const res: Models.ServiceListContainersSegmentResponse = {
@@ -334,13 +354,14 @@ export default class ServiceHandler extends BaseHandler
   public async getAccountInfo(
     context: Context
   ): Promise<Models.ServiceGetAccountInfoResponse> {
-    const response: Models.ContainerGetAccountInfoResponse = {
+    const response: Models.ServiceGetAccountInfoResponse = {
       statusCode: 200,
       requestId: context.contextId,
       clientRequestId: context.request!.getHeader("x-ms-client-request-id"),
       skuName: EMULATOR_ACCOUNT_SKUNAME,
       accountKind: EMULATOR_ACCOUNT_KIND,
       date: context.startTime!,
+      isHierarchicalNamespaceEnabled: EMULATOR_ACCOUNT_ISHIERARCHICALNAMESPACEENABLED,
       version: BLOB_API_VERSION
     };
     return response;
@@ -350,5 +371,12 @@ export default class ServiceHandler extends BaseHandler
     context: Context
   ): Promise<Models.ServiceGetAccountInfoResponse> {
     return this.getAccountInfo(context);
+  }
+
+  public filterBlobs(
+    options: Models.ServiceFilterBlobsOptionalParams,
+    context: Context
+  ): Promise<Models.ServiceFilterBlobsResponse> {
+    throw new NotImplementedError(context.contextId);
   }
 }

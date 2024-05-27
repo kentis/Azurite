@@ -73,6 +73,15 @@ export default class StorageErrorFactory {
     );
   }
 
+  public static ResourceNotFound(contextID: string = DefaultID): StorageError {
+    return new StorageError(
+      404,
+      "ResourceNotFound",
+      "The specified resource does not exist.",
+      contextID
+    );
+  }
+
   public static getInvalidQueryParameterValue(
     contextID: string = DefaultID,
     parameterName?: string,
@@ -751,6 +760,63 @@ export default class StorageErrorFactory {
       'Expected copyStatus to be "success" but got different status.',
       contextID,
       { ReceivedCopyStatus: copyStatus }
+    );
+  }
+  
+
+  public static getInvalidMetadata(contextID: string): StorageError {
+    return new StorageError(
+      400,
+      "InvalidMetadata",
+      "The metadata specified is invalid. It has characters that are not permitted.",
+      contextID
+    );
+  }
+
+  public static getEmptyTagName(contextID: string): StorageError {
+    return new StorageError(
+      400,
+      "EmptyTagName",
+      "The name of one of the tag key-value pairs is empty.",
+      contextID
+    );
+  }
+
+  public static getDuplicateTagNames(contextID: string): StorageError {
+    return new StorageError(
+      400,
+      "DuplicateTagNames",
+      "The tags specified contain duplicate names.",
+      contextID
+    );
+  }
+
+  public static getTagsTooLarge(contextID: string): StorageError {
+    return new StorageError(
+      400,
+      "TagsTooLarge",
+      "The tags specified exceed the maximum permissible limit.",
+      contextID
+    );
+  }
+
+  public static getInvalidTag(contextID: string): StorageError {
+    return new StorageError(
+      400,
+      "DuplicateTagNames",
+      "The tags specified are invalid. It contains characters that are not permitted.",
+      contextID
+    );
+  }  
+
+  public static getInvaidXmlDocument(
+    contextID: string = ""
+  ): StorageError {
+    return new StorageError(
+      400,
+      "InvaidXmlDocument",
+      `XML specified is not syntactically valid.`,
+      contextID
     );
   }
 }

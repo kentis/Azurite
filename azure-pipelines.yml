@@ -14,13 +14,13 @@ jobs:
   - job: blobtestubuntu20_04
     displayName: Blob Test Linux Ubuntu 20.04 LTS
     pool:
-      vmImage: "ubuntu-latest"
+      vmImage: "ubuntu-20.04"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_20_x:
+          node_version: 20.x
+        node_14_x:
+          node_version: 14.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -38,16 +38,22 @@ jobs:
         displayName: "npm run test:blob"
         env: {}
         
-  - job: blobtestubuntu18_04
-    displayName: Blob Test Linux Ubuntu 18.04
+      - script: |
+          npm run test:blob:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:blob:in-memory"
+        env: {}
+
+  - job: blobtestubuntu22_04
+    displayName: Blob Test Linux Ubuntu 22.04
     pool:
       vmImage: "ubuntu-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_16_x:
+          node_version: 16.x
+        node_18_x:
+          node_version: 18.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -63,6 +69,12 @@ jobs:
           npm run test:blob
         workingDirectory: "./"
         displayName: "npm run test:blob"
+        env: {}
+
+      - script: |
+          npm run test:blob:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:blob:in-memory"
         env: {}
 
   - job: blobtestwin
@@ -71,10 +83,10 @@ jobs:
       vmImage: "windows-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_14_x:
+          node_version: 14.x
+        node_16_x:
+          node_version: 16.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -90,6 +102,12 @@ jobs:
           npm run test:blob
         workingDirectory: "./"
         displayName: "npm run test:blob"
+        env: {}
+
+      - script: |
+          npm run test:blob:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:blob:in-memory"
         env: {}
 
   - job: blobtestmac
@@ -98,10 +116,10 @@ jobs:
       vmImage: "macOS-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_14_x:
+          node_version: 14.x
+        node_16_x:
+          node_version: 16.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -119,16 +137,22 @@ jobs:
         displayName: "npm run test:blob"
         env: {}
 
+      - script: |
+          npm run test:blob:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:blob:in-memory"
+        env: {}
+
   - job: blobtestmysql
     displayName: Blob Test Mysql
     pool:
       vmImage: "ubuntu-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_14_x:
+          node_version: 14.x
+        node_16_x:
+          node_version: 16.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -160,10 +184,10 @@ jobs:
       vmImage: "ubuntu-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_14_x:
+          node_version: 14.x
+        node_16_x:
+          node_version: 16.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -179,6 +203,12 @@ jobs:
           npm run test:queue
         workingDirectory: "./"
         displayName: "npm run test:queue"
+        env: {}
+
+      - script: |
+          npm run test:queue:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:queue:in-memory"
         env: {}
 
   - job: queuetestwin
@@ -187,10 +217,10 @@ jobs:
       vmImage: "windows-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_16_x:
+          node_version: 16.x
+        node_18_x:
+          node_version: 18.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -208,16 +238,22 @@ jobs:
         displayName: "npm run test:queue"
         env: {}
 
+      - script: |
+          npm run test:queue:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:queue:in-memory"
+        env: {}
+
   - job: queuetestmac
     displayName: Queue Test Mac
     pool:
       vmImage: "macOS-latest"
     strategy:
       matrix:
-        node_10_x:
-          node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_14_x:
+          node_version: 14.x
+        node_16_x:
+          node_version: 16.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -233,6 +269,12 @@ jobs:
           npm run test:queue
         workingDirectory: "./"
         displayName: "npm run test:queue"
+        env: {}
+
+      - script: |
+          npm run test:queue:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:queue:in-memory"
         env: {}
 
   - job: tabletestlinux
@@ -263,6 +305,12 @@ jobs:
         displayName: "npm run test:table"
         env: {}
 
+      - script: |
+          npm run test:table:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:table:in-memory"
+        env: {}
+
   - job: tabletestwin
     displayName: Table Test Windows
     pool:
@@ -291,6 +339,12 @@ jobs:
         displayName: "npm run test:table"
         env: {}
 
+      - script: |
+          npm run test:table:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:table:in-memory"
+        env: {}
+
   - job: tabletestmac
     displayName: Table Test Mac
     pool:
@@ -298,10 +352,10 @@ jobs:
     strategy:
       matrix:
         # Table tests no longer suport older node versions
-        node_14_x:
-          node_version: 14.x
         node_16_x:
           node_version: 16.x
+        node_18_x:
+          node_version: 18.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -317,6 +371,12 @@ jobs:
           npm run test:table
         workingDirectory: "./"
         displayName: "npm run test:table"
+        env: {}
+
+      - script: |
+          npm run test:table:in-memory
+        workingDirectory: "./"
+        displayName: "npm run test:table:in-memory"
         env: {}
 
   - job: azuritenodejslinux
@@ -511,8 +571,8 @@ jobs:
         # our .exe build program is currently incompatible with node 10
         # node_10_x:
         #   node_version: 10.x
-        node_12_x:
-          node_version: 14.x
+        node_18_x:
+          node_version: 18.x
     steps:
       - task: NodeTool@0
         inputs:
@@ -548,8 +608,8 @@ jobs:
         # our .exe build program is currently incompatible with node 10
         # node_10_x:
         #   node_version: 10.x
-        node_12_x:
-          node_version: 12.x
+        node_20_x:
+          node_version: 20.x
     steps:
       - task: NodeTool@0
         inputs:

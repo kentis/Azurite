@@ -10,7 +10,7 @@ enable-xml: true
 generate-metadata: false
 license-header: MICROSOFT_MIT_NO_VERSION
 output-folder: ../src/blob/generated
-input-file: blob-storage-2019-02-02.json
+input-file: blob-storage-2021-10-04.json
 model-date-time-as-string: true
 optional-response-headers: true
 enum-types: true
@@ -22,12 +22,45 @@ enum-types: true
 
 2. Updated blocklisttype for list blob blocks from required to optional.
 
-3. Make "Deleted" and "Snapshot" from required to optional for BlobItem model.
+3. Make "Deleted" and "Snapshot" from required to optional for "BlobItemInternal" model from:
 
-4. Make `ApiVersionParameter` parameter from required to optional.
+4. Change "Name" definition in "BlobItemInternal" from:
+   "Name": {
+   "$ref": "#/definitions/BlobName"
+   }
+   to
+   "Name": {
+   "type": "string"
+   }
 
-5. Add `x-ms-creation-time` to Blob_Download API responds
+5. Add "","deleted" to "ListContainersInclude" enum, add "","tags","versions","deletedwithversions","legalhold","permissions" to "ListBlobsInclude" enum.
 
-6. Add "","deleted" to "ListContainersInclude" enum, add "","tags","versions","deletedwithversions","legalhold","permissions" to "ListBlobsInclude" enum.
+6. Add section for "Container_SubmitBatch" operation.
 
-7. Add section for "Container_SubmitBatch" operation.
+7. Change "Name" definition in "BlobPrefix" from:
+   "Name": {
+   "$ref": "#/definitions/BlobName"
+   }
+   to
+   "Name": {
+   "type": "string"
+   }
+
+8. Make `ApiVersionParameter` parameter from required to optional.
+
+9. Add `x-ms-creation-time` to Blob_Download API response.
+
+10. Add "Premium" to "AccessTierRequired" enum and "AccessTierOptional" enum.
+    Add "Mutable" to "ImmutabilityPolicyMode" at around line #11994
+
+11. Add spec for: Blob_GetAccountInfoWithHead, Container_GetAccountInfoWithHead and Service_GetAccountInfoWithHead.
+
+12. Change return code from '200' to '202' for service_submitbatch.
+
+13. Change "AllowedHeaders" and "ExposedHeaders" to from required to optional.
+
+14. Remove "Container_Rename" section.
+
+15. Add "x-ms-delete-type-permanent" to "Blob_Delete" API response.
+
+16. Add "Cold" to "AccessTier", "AccessTierRequired", "AccessTierOptional"; and add "rehydrate-pending-to-cold" to "ArchiveStatus". (can be removed when upgrade to new API version.)

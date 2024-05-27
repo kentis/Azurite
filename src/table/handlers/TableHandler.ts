@@ -192,10 +192,13 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
     // const partitionKey = this.getAndCheckPartitionKey(tableContext);
     // const rowKey = this.getAndCheckRowKey(tableContext);
     if (
+      options.tableEntityProperties == undefined ||
       !options.tableEntityProperties ||
       // rowKey and partitionKey may be empty string
       options.tableEntityProperties.PartitionKey === null ||
-      options.tableEntityProperties.RowKey === null
+      options.tableEntityProperties.PartitionKey == undefined ||
+      options.tableEntityProperties.RowKey === null ||
+      options.tableEntityProperties.RowKey === undefined
     ) {
       throw StorageErrorFactory.getPropertiesNeedValue(context);
     }
@@ -205,11 +208,18 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
     this.validateKey(context, options.tableEntityProperties.RowKey);
 
     this.checkProperties(context, options.tableEntityProperties);
+
+    // need to remove the etags from the properties to avoid errors
+    // https://docs.microsoft.com/en-us/rest/api/storageservices/insert-entity
+    options.tableEntityProperties = this.removeEtagProperty(
+      options.tableEntityProperties
+    );
+
     const entity: Entity = this.createPersistedEntity(
       context,
       options,
-      options.tableEntityProperties.PartitionKey,
-      options.tableEntityProperties.RowKey
+      options.tableEntityProperties?.PartitionKey,
+      options.tableEntityProperties?.RowKey
     );
     let normalizedEntity;
     try {
@@ -246,8 +256,8 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
         account,
         table,
         this.getOdataAnnotationUrlPrefix(tableContext, account),
-        options.tableEntityProperties.PartitionKey,
-        options.tableEntityProperties.RowKey,
+        options.tableEntityProperties?.PartitionKey,
+        options.tableEntityProperties?.RowKey,
         accept
       );
 
@@ -394,12 +404,15 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
     }
     if (options?.ifMatch && options.ifMatch !== "*") {
       if (isEtagValid(options.ifMatch)) {
-        throw StorageErrorFactory.getInvalidOperation(context);
+        throw StorageErrorFactory.getInvalidInput(context);
       }
     }
     // check that key properties are valid
     this.validateKey(context, partitionKey);
     this.validateKey(context, rowKey);
+    options.tableEntityProperties = this.removeEtagProperty(
+      options.tableEntityProperties
+    );
 
     const entity: Entity = this.createPersistedEntity(
       context,
@@ -461,28 +474,11 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
       context
     );
 
-    if (!options.tableEntityProperties) {
-      throw StorageErrorFactory.getPropertiesNeedValue(context);
-    }
-    if (options?.ifMatch && options.ifMatch !== "*" && options.ifMatch !== "") {
-      if (isEtagValid(options.ifMatch)) {
-        throw StorageErrorFactory.getInvalidOperation(context);
-      }
-    }
+    this.checkMergeRequest(options, context, partitionKey, rowKey);
+    options.tableEntityProperties = this.removeEtagProperty(
+      options.tableEntityProperties
+    );
 
-    if (
-      options.tableEntityProperties.PartitionKey !== partitionKey ||
-      options.tableEntityProperties.RowKey !== rowKey
-    ) {
-      this.logger.warn(
-        `TableHandler:mergeEntity() Incoming PartitionKey:${partitionKey} RowKey:${rowKey} in URL parameters don't align with entity body PartitionKey:${options.tableEntityProperties.PartitionKey} RowKey:${options.tableEntityProperties.RowKey}.`
-      );
-    }
-    // check that key properties are valid
-    this.validateKey(context, partitionKey);
-    this.validateKey(context, rowKey);
-
-    this.checkProperties(context, options.tableEntityProperties);
     const entity: Entity = this.createPersistedEntity(
       context,
       options,
@@ -522,6 +518,64 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
     return response;
   }
 
+  /**
+   * Check that the properties are valid on merge request
+   *
+   * @private
+   * @param {Models.TableMergeEntityOptionalParams} options
+   * @param {Context} context
+   * @param {string} partitionKey
+   * @param {string} rowKey
+   * @memberof TableHandler
+   */
+  private checkMergeRequest(
+    options: Models.TableMergeEntityOptionalParams,
+    context: Context,
+    partitionKey: string,
+    rowKey: string
+  ) {
+    // some SDKs, like Azure Cosmos Table do not always send properties
+    // and we might merge just row and partition keys like upsert
+    // this caused issues and has been removed for now.
+    // if (!options.tableEntityProperties) {
+    //   throw StorageErrorFactory.getPropertiesNeedValue(context);
+    // }
+    if (options.tableEntityProperties !== undefined) {
+      if (
+        options.tableEntityProperties.PartitionKey !== partitionKey ||
+        options.tableEntityProperties.RowKey !== rowKey
+      ) {
+        this.logger.warn(
+          `TableHandler:mergeEntity() Incoming PartitionKey:${partitionKey} RowKey:${rowKey} in URL parameters don't align with entity body PartitionKey:${options.tableEntityProperties.PartitionKey} RowKey:${options.tableEntityProperties.RowKey}.`
+        );
+      }
+      this.checkProperties(context, options.tableEntityProperties);
+    }
+    this.checkMergeIfMatch(options, context);
+    // check that key properties are valid
+    this.validateKey(context, partitionKey);
+    this.validateKey(context, rowKey);
+  }
+
+  /**
+   * Check that the ifMatch header is valid on merge request
+   *
+   * @private
+   * @param {Models.TableMergeEntityOptionalParams} options
+   * @param {Context} context
+   * @memberof TableHandler
+   */
+  private checkMergeIfMatch(
+    options: Models.TableMergeEntityOptionalParams,
+    context: Context
+  ) {
+    if (options?.ifMatch && options.ifMatch !== "*" && options.ifMatch !== "") {
+      if (isEtagValid(options.ifMatch)) {
+        throw StorageErrorFactory.getInvalidOperation(context);
+      }
+    }
+  }
+
   public async deleteEntity(
     _table: string,
     partitionKey: string | undefined,
@@ -544,7 +598,7 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
       throw StorageErrorFactory.getPreconditionFailed(context);
     }
     if (ifMatch !== "*" && isEtagValid(ifMatch)) {
-      throw StorageErrorFactory.getInvalidOperation(context);
+      throw StorageErrorFactory.getInvalidInput(context);
     }
     // currently the props are not coming through as args, so we take them from the table context
     await this.metadataStore.deleteTableEntity(
@@ -903,7 +957,11 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
     const contentTypeResponse = tableCtx.request
       ?.getHeader("content-type")
       ?.replace("batch", "batchresponse");
-    const tableBatchManager = new TableBatchOrchestrator(tableCtx, this);
+    const tableBatchManager = new TableBatchOrchestrator(
+      tableCtx,
+      this,
+      this.metadataStore
+    );
 
     const requestBody = await TableBatchUtils.StreamToString(body);
     this.logger.debug(
@@ -915,8 +973,7 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
 
     const response =
       await tableBatchManager.processBatchRequestAndSerializeResponse(
-        requestBody,
-        this.metadataStore
+        requestBody
       );
 
     this.logger.debug(
@@ -1104,5 +1161,28 @@ export default class TableHandler extends BaseHandler implements ITableHandler {
     if (undefined !== body && getUTF8ByteSize(body) > ENTITY_SIZE_MAX) {
       throw StorageErrorFactory.getEntityTooLarge(context);
     }
+  }
+
+  /**
+   * remove the etag property to avoid duplicate odata.etag error
+   *
+   * @private
+   * @param {{
+   *       [propertyName: string]: any;
+   *     }} tableEntityProperties
+   * @return {*}  {({ [propertyName: string]: any } | undefined)}
+   * @memberof TableHandler
+   */
+  private removeEtagProperty(
+    tableEntityProperties:
+      | {
+          [propertyName: string]: any;
+        }
+      | undefined
+  ): { [propertyName: string]: any } | undefined {
+    if (tableEntityProperties) {
+      delete tableEntityProperties["odata.etag"];
+    }
+    return tableEntityProperties;
   }
 }

@@ -3,24 +3,24 @@ import { BlobSASPermission } from "./BlobSASPermissions";
 import { ContainerSASPermission } from "./ContainerSASPermissions";
 
 export class OperationBlobSASPermission {
-  constructor(public readonly permission: string = "") {}
+  constructor(public readonly permission: string = "") { }
 
   public validate(permissions: string): boolean {
     return this.validatePermissions(permissions);
   }
 
   public validatePermissions(permissions: string): boolean {
-    if (this.permission !== "") {
-      for (const p of this.permission) {
-        if (permissions.toString().includes(p)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    else {
+    // Only blob batch operation allows Any permissions.
+    if (this.permission === ContainerSASPermission.Any) {
       return permissions.toString() !== "";
     }
+
+    for (const p of this.permission) {
+      if (permissions.toString().includes(p)) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -274,6 +274,14 @@ OPERATION_BLOB_SAS_BLOB_PERMISSIONS.set(
   Operation.BlockBlob_GetBlockList,
   new OperationBlobSASPermission(BlobSASPermission.Read)
 );
+OPERATION_BLOB_SAS_BLOB_PERMISSIONS.set(
+  Operation.Blob_SetTags,
+  new OperationBlobSASPermission(BlobSASPermission.Tag)
+);
+OPERATION_BLOB_SAS_BLOB_PERMISSIONS.set(
+  Operation.Blob_GetTags,
+  new OperationBlobSASPermission(BlobSASPermission.Tag)
+);
 
 // Blob Service SAS Permissions for container level
 export const OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS = new Map<
@@ -327,7 +335,7 @@ OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
 );
 OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
   Operation.Container_SubmitBatch,
-  new OperationBlobSASPermission()
+  new OperationBlobSASPermission(ContainerSASPermission.Any)
 );
 OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
   Operation.Container_GetAccessPolicy,
@@ -525,4 +533,12 @@ OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
 OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
   Operation.BlockBlob_GetBlockList,
   new OperationBlobSASPermission(BlobSASPermission.Read)
+);
+OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
+  Operation.Blob_SetTags,
+  new OperationBlobSASPermission(BlobSASPermission.Tag)
+);
+OPERATION_BLOB_SAS_CONTAINER_PERMISSIONS.set(
+  Operation.Blob_GetTags,
+  new OperationBlobSASPermission(BlobSASPermission.Tag)
 );

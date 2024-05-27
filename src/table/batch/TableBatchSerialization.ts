@@ -1,11 +1,11 @@
 // import BatchOperation from "../../common/BatchOperation";
 // import { BatchOperationType } from "../../common/BatchOperation";
-import { BatchType } from "../../common/batch/BatchOperation";
-import BatchRequest from "../../common/batch/BatchRequest";
+import "./BatchOperation";
+import BatchRequest from "./BatchRequest";
 // import BatchSubResponse from "../../common/BatchSubResponse";
 
 import { HttpMethod } from "../../table/generated/IRequest";
-import { BatchSerialization } from "../../common/batch/BatchSerialization";
+import { BatchSerialization } from "./BatchSerialization";
 import TableBatchOperation from "../batch/TableBatchOperation";
 import * as Models from "../generated/artifacts/models";
 import TableBatchUtils from "./TableBatchUtils";
@@ -58,8 +58,7 @@ export class TableBatchSerialization extends BatchSerialization {
     // of the request by deserializing it into a BatchOperation Type
     const batchOperations: TableBatchOperation[] = subRequests.map(
       (subRequest) => {
-        let requestType: RegExpMatchArray | null = [];
-        requestType = subRequest.match(
+        let requestType: RegExpMatchArray | null = subRequest.match(
           "(GET|PATCH|POST|PUT|MERGE|INSERT|DELETE)"
         );
         if (requestType === null || requestType.length < 2) {
@@ -85,10 +84,13 @@ export class TableBatchSerialization extends BatchSerialization {
 
         const jsonOperationBody = subRequest.match(/{+.+}+/);
 
+        // Delete does not use a JSON body, but the COSMOS Table client also
+        // submits requests without a JSON body for merge
         if (
           subRequests.length > 1 &&
           null !== requestType &&
           requestType[0] !== "DELETE" &&
+          requestType[0] !== "MERGE" &&
           (jsonOperationBody === null || jsonOperationBody.length < 1)
         ) {
           throw new Error(
@@ -110,14 +112,14 @@ export class TableBatchSerialization extends BatchSerialization {
           subStringEnd = subRequest.indexOf(jsonOperationBody[0]);
           jsonBody = jsonOperationBody[0];
         } else {
-          // remove 1 \r\n
-          subStringEnd = subRequest.length - 4;
+          // trim "\r\n\r\n" or "\n\n" from subRequest
+          subStringEnd = subRequest.length - HTTP_LINE_ENDING.length * 2;
           jsonBody = "";
         }
 
         headers = subRequest.substring(subStringStart, subStringEnd);
 
-        const operation = new TableBatchOperation(BatchType.table, headers);
+        const operation = new TableBatchOperation(headers);
         if (null !== requestType) {
           operation.httpMethod = requestType[0] as HttpMethod;
         }

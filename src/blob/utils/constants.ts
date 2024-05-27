@@ -1,8 +1,8 @@
 import { StoreDestinationArray } from "../../common/persistence/IExtentStore";
 import * as Models from "../generated/artifacts/models";
 
-export const VERSION = "3.22.0";
-export const BLOB_API_VERSION = "2021-12-02";
+export const VERSION = "3.30.0";
+export const BLOB_API_VERSION = "2024-05-04";
 export const DEFAULT_BLOB_SERVER_HOST_NAME = "127.0.0.1"; // Change to 0.0.0.0 when needs external access
 export const DEFAULT_LIST_BLOBS_MAX_RESULTS = 5000;
 export const DEFAULT_LIST_CONTAINERS_MAX_RESULTS = 5000;
@@ -30,6 +30,7 @@ export const EMULATOR_ACCOUNT_KEY = Buffer.from(
 
 export const EMULATOR_ACCOUNT_SKUNAME = Models.SkuName.StandardRAGRS;
 export const EMULATOR_ACCOUNT_KIND = Models.AccountKind.StorageV2;
+export const EMULATOR_ACCOUNT_ISHIERARCHICALNAMESPACEENABLED = false;
 
 export const HeaderConstants = {
   AUTHORIZATION: "authorization",
@@ -96,6 +97,12 @@ export const DEFAULT_BLOB_PERSISTENCE_ARRAY: StoreDestinationArray = [
 ];
 
 export const ValidAPIVersions = [
+  "2024-05-04",
+  "2024-02-04",
+  "2023-11-03",
+  "2023-08-03",
+  "2023-01-03",
+  "2022-11-02",
   "2021-12-02",
   "2021-10-04",
   "2021-08-06",
@@ -131,7 +138,7 @@ export const ValidAPIVersions = [
   "2009-04-14"
 ];
 
-export const MAX_APPEND_BLOB_BLOCK_SIZE = 4 * 1024 * 1024; // 4MB
+export const MAX_APPEND_BLOB_BLOCK_SIZE = 100 * 1024 * 1024; // 100MB
 export const MAX_APPEND_BLOB_BLOCK_COUNT = 50000;
 
 // Validate audience, accept following audience patterns

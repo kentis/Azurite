@@ -67,6 +67,7 @@ import IBlobMetadataStore, {
   SetContainerAccessPolicyOptions
 } from "./IBlobMetadataStore";
 import PageWithDelimiter from "./PageWithDelimiter";
+import { getBlobTagsCount, getTagsFromString } from "../utils/utils";
 
 // tslint:disable: max-classes-per-file
 class ServicesModel extends Model {}
@@ -289,6 +290,9 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
         },
         metadata: {
           type: "VARCHAR(2047)"
+        },
+        blobTags: {
+          type: "VARCHAR(4096)"
         }
       },
       {
@@ -1725,12 +1729,19 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
 
       // TODO: Return blobCommittedBlockCount for append blob
 
-      return LeaseFactory.createLeaseState(
+      let responds =  LeaseFactory.createLeaseState(
         new BlobLeaseAdapter(blobModel),
         context
       )
         .validate(new BlobReadLeaseValidator(leaseAccessConditions))
         .sync(new BlobLeaseSyncer(blobModel));
+      return {
+        ...responds,
+        properties : {
+          ...responds.properties,
+          tagCount: getBlobTagsCount(blobModel.blobTags),
+        },
+      }
     });
   }
 
@@ -1789,6 +1800,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
 
       snapshotBlob.snapshot = snapshotTime;
       snapshotBlob.metadata = metadata || snapshotBlob.metadata;
+      snapshotBlob.blobTags = snapshotBlob.blobTags;
 
       new BlobLeaseSyncer(snapshotBlob).sync({
         leaseId: undefined,
@@ -1992,7 +2004,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     leaseAccessConditions: Models.LeaseAccessConditions | undefined,
     blobHTTPHeaders: Models.BlobHTTPHeaders | undefined,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     return this.sequelize.transaction(async (t) => {
       await this.assertContainerExists(context, account, container, t);
 
@@ -2068,7 +2080,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     leaseAccessConditions: Models.LeaseAccessConditions | undefined,
     metadata: Models.BlobMetadata | undefined,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     return this.sequelize.transaction(async (t) => {
       await this.assertContainerExists(context, account, container, t);
 
@@ -2124,7 +2136,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
         }
       );
 
-      const ret: Models.BlobProperties = {
+      const ret: Models.BlobPropertiesInternal = {
         lastModified,
         etag,
         leaseStatus: blobModel.properties.leaseStatus,
@@ -2490,7 +2502,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     metadata: Models.BlobMetadata | undefined,
     tier: Models.AccessTier | undefined,
     options: Models.BlobStartCopyFromURLOptionalParams = {}
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     return this.sequelize.transaction(async (t) => {
       const sourceBlob = await this.getBlobWithLeaseUpdated(
         source.account,
@@ -2512,7 +2524,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
             options.sourceModifiedAccessConditions.sourceIfModifiedSince,
           ifUnmodifiedSince:
             options.sourceModifiedAccessConditions.sourceIfUnmodifiedSince,
-          ifMatch: options.sourceModifiedAccessConditions.sourceIfMatches,
+          ifMatch: options.sourceModifiedAccessConditions.sourceIfMatch,
           ifNoneMatch: options.sourceModifiedAccessConditions.sourceIfNoneMatch
         },
         sourceBlob
@@ -2616,7 +2628,8 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
         leaseBreakTime:
           destBlob !== undefined ? destBlob.leaseBreakTime : undefined,
         committedBlocksInOrder: sourceBlob.committedBlocksInOrder,
-        persistency: sourceBlob.persistency
+        persistency: sourceBlob.persistency,
+        blobTags: options.blobTagsString === undefined ? undefined : getTagsFromString(options.blobTagsString, context.contextId!)
       };
 
       if (
@@ -2655,7 +2668,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     destination: BlobId,
     copySource: string,
     metadata: Models.BlobMetadata | undefined
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     throw new Error("Method not implemented.");
   }
 
@@ -2713,7 +2726,8 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
       if (
         (tier === Models.AccessTier.Archive ||
           tier === Models.AccessTier.Cool ||
-          tier === Models.AccessTier.Hot) &&
+          tier === Models.AccessTier.Hot ||
+          tier === Models.AccessTier.Cold) &&
         blobType === Models.BlobType.BlockBlob
       ) {
         // Block blob
@@ -2723,7 +2737,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
         // Archive -> Coo/Hot will return 202
         if (
           accessTier === Models.AccessTier.Archive &&
-          (tier === Models.AccessTier.Cool || tier === Models.AccessTier.Hot)
+          (tier === Models.AccessTier.Cool || tier === Models.AccessTier.Hot || tier === Models.AccessTier.Cold)
         ) {
           responseCode = 202;
         }
@@ -2764,7 +2778,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     persistency: IExtentChunk,
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     throw new Error("Method not implemented.");
   }
 
@@ -2775,7 +2789,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     end: number,
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     throw new Error("Method not implemented.");
   }
 
@@ -2799,7 +2813,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     blobContentLength: number,
     leaseAccessConditions?: Models.LeaseAccessConditions,
     modifiedAccessConditions?: Models.ModifiedAccessConditions
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     throw new Error("Method not implemented.");
   }
 
@@ -2810,7 +2824,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     blob: string,
     sequenceNumberAction: Models.SequenceNumberActionType,
     blobSequenceNumber: number | undefined
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     throw new Error("Method not implemented.");
   }
 
@@ -2822,7 +2836,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     appendPositionAccessConditions?:
       | Models.AppendPositionAccessConditions
       | undefined
-  ): Promise<Models.BlobProperties> {
+  ): Promise<Models.BlobPropertiesInternal> {
     throw new Error("Method not implemented.");
   }
 
@@ -3048,7 +3062,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     return ret;
   }
 
-  private convertContainerModelToDbModel(container: ContainerModel): object {
+  private convertContainerModelToDbModel(container: ContainerModel): any {
     const lease = new ContainerLeaseAdapter(container).toString();
     return {
       accountName: container.accountName,
@@ -3132,11 +3146,12 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
         dbModel,
         "committedBlocksInOrder"
       ),
-      metadata: this.deserializeModelValue(dbModel, "metadata")
+      metadata: this.deserializeModelValue(dbModel, "metadata"),
+      blobTags: this.deserializeModelValue(dbModel, "blobTags")
     };
   }
 
-  private convertBlobModelToDbModel(blob: BlobModel): object {
+  private convertBlobModelToDbModel(blob: BlobModel): any {
     const contentProperties = this.convertBlobContentPropertiesToDbModel(
       blob.properties
     );
@@ -3168,6 +3183,7 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
       committedBlocksInOrder:
         this.serializeModelValue(blob.committedBlocksInOrder) || null,
       metadata: this.serializeModelValue(blob.metadata) || null,
+      blobTags: this.serializeModelValue(blob.blobTags) || null,
       ...contentProperties
     };
   }
@@ -3303,6 +3319,105 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     return doc;
   }
 
+  public setBlobTag(
+    context: Context,
+    account: string,
+    container: string,
+    blob: string,
+    snapshot: string | undefined,
+    leaseAccessConditions: Models.LeaseAccessConditions | undefined,
+    tags: Models.BlobTags | undefined,
+    modifiedAccessConditions?: Models.ModifiedAccessConditions
+  ): Promise<void> {
+    return this.sequelize.transaction(async (t) => {
+      await this.assertContainerExists(context, account, container, t);
+
+      const blobFindResult = await BlobsModel.findOne({
+        where: {
+          accountName: account,
+          containerName: container,
+          blobName: blob,
+          snapshot: snapshot === undefined ? "" : snapshot,
+          deleting: 0,
+          isCommitted: true
+        },
+        transaction: t
+      });
+
+      if (blobFindResult === null || blobFindResult === undefined) {
+        throw StorageErrorFactory.getBlobNotFound(context.contextId);
+      }
+
+      const blobModel = this.convertDbModelToBlobModel(blobFindResult);
+
+      LeaseFactory.createLeaseState(new BlobLeaseAdapter(blobModel), context)
+        .validate(new BlobWriteLeaseValidator(leaseAccessConditions))
+        .sync(new BlobWriteLeaseSyncer(blobModel));
+
+      await BlobsModel.update(
+        {
+          blobTags: this.serializeModelValue(tags) || null,
+          ...this.convertLeaseToDbModel(new BlobLeaseAdapter(blobModel))
+        },
+        {
+          where: {
+            accountName: account,
+            containerName: container,
+            blobName: blob,
+            snapshot: snapshot === undefined ? "" : snapshot,
+            deleting: 0
+          },
+          transaction: t
+        }
+      );
+    });
+  }
+
+  public async getBlobTag(
+    context: Context,
+    account: string,
+    container: string,
+    blob: string,
+    snapshot: string = "",
+    leaseAccessConditions?: Models.LeaseAccessConditions,
+    modifiedAccessConditions?: Models.ModifiedAccessConditions
+  ): Promise<Models.BlobTags | undefined> {
+    return this.sequelize.transaction(async (t) => {
+      await this.assertContainerExists(context, account, container, t);
+
+      const blobFindResult = await BlobsModel.findOne({
+        where: {
+          accountName: account,
+          containerName: container,
+          blobName: blob,
+          snapshot,
+          deleting: 0,
+          isCommitted: true
+        },
+        transaction: t
+      });
+
+      if (blobFindResult === null || blobFindResult === undefined) {
+        throw StorageErrorFactory.getBlobNotFound(context.contextId);
+      }
+
+      const blobModel: BlobModel = this.convertDbModelToBlobModel(
+        blobFindResult
+      );
+
+      if (!blobModel.isCommitted) {
+        throw StorageErrorFactory.getBlobNotFound(context.contextId);
+      }      
+      
+      LeaseFactory.createLeaseState(
+        new BlobLeaseAdapter(blobModel),
+        context
+      ).validate(new BlobReadLeaseValidator(leaseAccessConditions));
+
+      return blobModel.blobTags;
+    });
+  }
+
   /**
    * Get the tier setting from request headers.
    *
@@ -3321,6 +3436,9 @@ export default class SqlBlobMetadataStore implements IBlobMetadataStore {
     }
     if (tier === Models.AccessTier.Archive.toLowerCase()) {
       return Models.AccessTier.Archive;
+    }
+    if (tier === Models.AccessTier.Cold.toLowerCase()) {
+      return Models.AccessTier.Cold;
     }
     return undefined;
   }

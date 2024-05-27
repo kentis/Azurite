@@ -71,9 +71,8 @@ export default class BlobSASAuthenticator implements IAuthenticator {
     // TODO: Make following async
     const accountProperties = this.accountDataStore.getAccount(account);
     if (accountProperties === undefined) {
-      throw StorageErrorFactory.getInvalidOperation(
-        context.contextId!,
-        "Invalid storage account."
+      throw StorageErrorFactory.ResourceNotFound(
+        blobContext.contextId!
       );
     }
     this.logger.debug(
@@ -277,7 +276,7 @@ export default class BlobSASAuthenticator implements IAuthenticator {
           context.contextId!
         );
 
-        const sig2Pass = sig2 !== signature;
+        const sig2Pass = sig2 === signature;
         this.logger.info(
           `BlobSASAuthenticator:validate() Signature based on key2 validation ${
             sig2Pass ? "passed" : "failed"

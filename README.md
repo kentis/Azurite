@@ -9,7 +9,7 @@
 
 | Version                                                            | Azure Storage API Version | Service Support                | Description                                       | Reference Links                                                                                                                                                                                                         |
 | ------------------------------------------------------------------ | ------------------------- | ------------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 3.22.0                                                             | 2021-12-02                | Blob, Queue and Table(preview) | Azurite V3 based on TypeScript & New Architecture | [NPM](https://www.npmjs.com/package/azurite) - [Docker](https://hub.docker.com/_/microsoft-azure-storage-azurite) - [Visual Studio Code Extension](https://marketplace.visualstudio.com/items?itemName=Azurite.azurite) |
+| 3.30.0                                                             | 2024-05-04                | Blob, Queue and Table(preview) | Azurite V3 based on TypeScript & New Architecture | [NPM](https://www.npmjs.com/package/azurite) - [Docker](https://hub.docker.com/_/microsoft-azure-storage-azurite) - [Visual Studio Code Extension](https://marketplace.visualstudio.com/items?itemName=Azurite.azurite) |
 | [Legacy (v2)](https://github.com/Azure/Azurite/tree/legacy-master) | 2016-05-31                | Blob, Queue and Table          | Legacy Azurite V2                                 | [NPM](https://www.npmjs.com/package/azurite)                                                                                                                                                                            |
 
 - [Azurite V3](#azurite-v3)
@@ -33,6 +33,8 @@
     - [Certificate Configuration (HTTPS)](#certificate-configuration-https)
     - [OAuth Configuration](#oauth-configuration)
     - [Skip API Version Check](#skip-api-version-check)
+    - [Disable Product Style Url](#disable-product-style-url)
+    - [Use in-memory storage](#use-in-memory-storage)
     - [Command Line Options Differences between Azurite V2](#command-line-options-differences-between-azurite-v2)
   - [Supported Environment Variable Options](#supported-environment-variable-options)
     - [Customized Storage Accounts & Keys](#customized-storage-accounts--keys)
@@ -76,19 +78,19 @@ Compared to V2, Azurite V3 implements a new architecture leveraging code generat
 
 ## Features & Key Changes in Azurite V3
 
-- Blob storage features align with Azure Storage API version 2021-12-02 (Refer to support matrix section below)
+- Blob storage features align with Azure Storage API version 2024-05-04 (Refer to support matrix section below)
   - SharedKey/Account SAS/Service SAS/Public Access Authentications/OAuth
   - Get/Set Blob Service Properties
   - Create/List/Delete Containers
   - Create/Read/List/Update/Delete Block Blobs
   - Create/Read/List/Update/Delete Page Blobs
-- Queue storage features align with Azure Storage API version 2021-12-02 (Refer to support matrix section below)
+- Queue storage features align with Azure Storage API version 2024-05-04 (Refer to support matrix section below)
   - SharedKey/Account SAS/Service SAS/OAuth
   - Get/Set Queue Service Properties
   - Preflight Request
   - Create/List/Delete Queues
   - Put/Get/Peek/Updata/Deleta/Clear Messages
-- Table storage features align with Azure Storage API version 2021-12-02 (Refer to support matrix section below)
+- Table storage features align with Azure Storage API version 2024-05-04 (Refer to support matrix section below)
   - SharedKey/Account SAS/Service SAS/OAuth
   - Create/List/Delete Tables
   - Insert/Update/Query/Delete Table Entities
@@ -144,19 +146,19 @@ This tells Azurite to store all data in a particular directory `c:\azurite`. If 
 For example, to start blob service only:
 
 ```bash
-$ azurite-blob -l path/to/azurite/workspace
+azurite-blob -l path/to/azurite/workspace
 ```
 
 Start queue service only:
 
 ```bash
-$ azurite-queue -l path/to/azurite/workspace
+azurite-queue -l path/to/azurite/workspace
 ```
 
 Start table service only:
 
 ```bash
-$ azurite-table -l path/to/azurite/workspace
+azurite-table -l path/to/azurite/workspace
 ```
 
 ### Visual Studio Code Extension
@@ -198,12 +200,14 @@ Following extension configurations are supported:
 - `azurite.oauth` OAuth oauthentication level. Candidate level values: `basic`.
 - `azurite.skipApiVersionCheck` Skip the request API version check, by default false.
 - `azurite.disableProductStyleUrl` Force parsing storage account name from request Uri path, instead of from request Uri host.
+- `azurite.inMemoryPersistence` Disable persisting any data to disk. If the Azurite process is terminated, all data is lost.
+- `azurite.extentMemoryLimit` When using in-memory persistence, limit the total size of extents (blob and queue content) to a specific number of megabytes. This does not limit blob, queue, or table metadata. Defaults to 50% of total memory.
 
 ### [DockerHub](https://hub.docker.com/_/microsoft-azure-storage-azurite)
 
 #### Run Azurite V3 docker image
 
-> Note. Find more docker images tags in https://mcr.microsoft.com/v2/azure-storage/azurite/tags/list
+> Note. Find more docker images tags in <https://mcr.microsoft.com/v2/azure-storage/azurite/tags/list>
 
 ```bash
 docker run -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
@@ -430,6 +434,52 @@ Optional. When using FQDN instead of IP in request Uri host, by default Azurite 
 --disableProductStyleUrl
 ```
 
+### Use in-memory storage
+
+Optional. Disable persisting any data to disk and only store data in-memory. If the Azurite process is terminated, all
+data is lost. By default, LokiJS persists blob and queue metadata to disk and content to extent files. Table storage
+persists all data to disk. This behavior can be disabled using this option. This setting is rejected when the SQL based
+metadata implementation is enabled (via `AZURITE_DB`). This setting is rejected when the `--location` option is
+specified.
+
+```cmd
+--inMemoryPersistence
+```
+
+By default, the in-memory extent store (for blob and queue content) is limited to 50% of the total memory on the host
+machine. This is evaluated to using [`os.totalmem()`](https://nodejs.org/api/os.html#ostotalmem). This limit can be
+overridden using the `--extentMemoryLimit <megabytes>` option. There is no restriction on the value specified for this
+option but virtual memory may be used if the limit exceeds the amount of available physical memory as provided by the
+operating system. A high limit may eventually lead to out of memory errors or reduced performance.
+
+As blob or queue content (i.e. bytes in the in-memory extent store) is deleted, the memory is not freed immediately.
+Similar to the default file-system based extent store, both the blob and queue service have an extent garbage collection
+(GC) process. This process is in addition to the standard Node.js runtime GC. The extent GC periodically detects unused
+extents and deletes them from the extent store. This happens on a regular time period rather than immediately after
+the blob or queue REST API operation that caused some content to be deleted. This means that process memory consumed by
+the deleted blob or queue content will only be released after both the extent GC and the runtime GC have run. The extent
+GC will remove the reference to the in-memory byte storage and the runtime GC will free the unreferenced memory some
+time after that. The blob extent GC runs every 10 minutes and the queue extent GC runs every 1 minute.
+
+The queue and blob extent storage count towards the same limit. The `--extentMemoryLimit` setting is rejected when
+`--inMemoryPersistence` is not specified. LokiJS storage (blob and queue metadata and table data) does
+not contribute to this limit and is unbounded which is the same as without the `--inMemoryPersistence` option.
+
+```cmd
+--extentMemoryLimit <megabytes>
+```
+
+This option is rejected when `--inMemoryPersistence` is not specified.
+
+When the limit is reached, write operations to the blob or queue endpoints which carry content will fail with an `HTTP
+409` status code, a custom storage error code of `MemoryExtentStoreAtSizeLimit`, and a helpful error message.
+Well-behaved storage SDKs and tools will not a retry on this failure and will return a related error message. If this
+error is met, consider deleting some in-memory content (blobs or queues), raising the limit, or restarting the Azurite
+server thus resetting the storage completely.
+
+Note that if many hundreds of megabytes of content (queue message or blob content) are stored in-memory, it can take
+noticeably longer than usual for the process to terminate since all the consumed memory needs to be released.
+
 ### Command Line Options Differences between Azurite V2
 
 Azurite V3 supports SharedKey, Account Shared Access Signature (SAS), Service SAS, OAuth, and Public Container Access authentications, you can use any Azure Storage SDKs or tools like Storage Explorer to connect Azurite V3 with any authentication strategy.
@@ -447,13 +497,13 @@ Azurite V3 allows customizing storage account names and keys by providing enviro
 For example, customize one storage account which has only one key:
 
 ```cmd
-set AZURITE_ACCOUNTS="account1:key1"
+set AZURITE_ACCOUNTS=account1:key1
 ```
 
 Or customize multi storage accounts and each has 2 keys:
 
 ```cmd
-set AZURITE_ACCOUNTS="account1:key1:key2;account2:key1:key2"
+set AZURITE_ACCOUNTS=account1:key1:key2;account2:key1:key2
 ```
 
 Azurite will refresh customized account name and key from environment variable every minute by default. With this feature, we can dynamically rotate account key, or add new storage accounts on the air without restarting Azurite instance.
@@ -465,6 +515,10 @@ Azurite will refresh customized account name and key from environment variable e
 > Note. Should update connection string accordingly if using customized account name and key.
 
 > Note. Use `export` keyword to set environment variable in Linux like environment, `set` in Windows.
+
+> Note. When changing storage account name, keep these rules in mind as same as [Azure Storage Account](https://learn.microsoft.com/en-us/azure/storage/common/storage-account-overview#storage-account-name):
+>
+> - Storage account names must be between 3 and 24 characters in length and may contain numbers and lowercase letters only.
 
 ### Customized Metadata Storage by External Database (Preview)
 
@@ -504,7 +558,7 @@ You have a few options to generate PEM certificate and key files. We'll show you
 
 ###### Generate Certificate and Key with mkcert
 
-1. Install mkcert: https://github.com/FiloSottile/mkcert#installation. We like to use choco `choco install mkcert`, but you can install with any mechanism you'd like.
+1. Install mkcert: <https://github.com/FiloSottile/mkcert#installation>. We like to use choco `choco install mkcert`, but you can install with any mechanism you'd like.
 2. Run the following commands to install the Root CA and generate a cert for Azurite.
 
 ```bash
@@ -535,7 +589,7 @@ docker run -p 10000:10000 -p 10001:10001 -p 10002:10002 -v c:/azurite:/workspace
 
 ###### Install OpenSSL on Windows
 
-1. Download and install the OpenSSL v1.1.1a+ EXE from http://slproweb.com/products/Win32OpenSSL.html
+1. Download and install the OpenSSL v1.1.1a+ EXE from <http://slproweb.com/products/Win32OpenSSL.html>
 2. Set the following environment variables
 
 ```bash
@@ -585,14 +639,14 @@ You can use the following command to generate a PFX file with `dotnet dev-certs`
 dotnet dev-certs https --trust -ep cert.pfx -p <password>
 ```
 
-> Storage Explorer does not currently work with certificates produced by `dotnet dev-certs`. While you can use them for Azurite and Azure SDKs, you won't be able to access the Azurite endpoints with Storage Explorer if you are using the certs created with dotnet dev-certs. We are tracking this issue on GitHub here: https://github.com/microsoft/AzureStorageExplorer/issues/2859
+> Storage Explorer does not currently work with certificates produced by `dotnet dev-certs`. While you can use them for Azurite and Azure SDKs, you won't be able to access the Azurite endpoints with Storage Explorer if you are using the certs created with dotnet dev-certs. We are tracking this issue on GitHub here: <https://github.com/microsoft/AzureStorageExplorer/issues/2859>
 
 #### Start Azurite with HTTPS and PFX
 
-Then you start Azurite with that cert and key.
+Then you start Azurite with that cert and password.
 
 ```bash
-azurite --cert cert.pem --key key.pem
+azurite --cert cert.pfx --pwd pfxpassword
 ```
 
 NOTE: If you are using the Azure SDKs, then you will also need to pass the `--oauth basic` option.
@@ -721,7 +775,7 @@ By default Storage Explorer will not open an HTTPS endpoint that uses a self-sig
 1. Find the certificate on your local machine.
    - **OpenSSL**: You can find the PEM file at the location you created in the [HTTPS Setup](#https-setup) section above.
    - **mkcert**: You need to import the RootCA.pem file, which can be found by executing this command in the terminal: `mkcert -CAROOT`. For mkcert, you want to import the RootCA.pem file, not the certificate file you created.
-   - **dotnet dev-certs**: Storage Explorer doesn't currently work with certs produced by `dotnet dev-certs`. We are tracking this issue on GitHub here: https://github.com/microsoft/AzureStorageExplorer/issues/2859
+   - **dotnet dev-certs**: Storage Explorer doesn't currently work with certs produced by `dotnet dev-certs`. We are tracking this issue on GitHub here: <https://github.com/microsoft/AzureStorageExplorer/issues/2859>
 2. Open Storage Explorer -> Edit -> SSL Certificates -> Import Certificates and import your certificate.
 
 If you do not set this, then you will get the following error:
@@ -837,9 +891,9 @@ DefaultEndpointsProtocol=http;AccountName=account1;AccountKey=key1;BlobEndpoint=
 
 > Note. Do not access default account in this way with Azure Storage Explorer. There is a bug that Storage Explorer is always adding account name in URL path, causing failures.
 
-> Note. When use Production-style URL to access Azurite, by default the account name should be the host name in FQDN, like "http://devstoreaccount1.blob.localhost:10000/container". To use Production-style URL with account name in URL path, like "http://foo.bar.com:10000/devstoreaccount1/container", please start Azurite with `--disableProductStyleUrl`.
+> Note. When use Production-style URL to access Azurite, by default the account name should be the host name in FQDN, like "<http://devstoreaccount1.blob.localhost:10000/container>". To use Production-style URL with account name in URL path, like "<http://foo.bar.com:10000/devstoreaccount1/container>", please start Azurite with `--disableProductStyleUrl`.
 
-> Note. If use "host.docker.internal" as request Uri host, like "http://host.docker.internal:10000/devstoreaccount1/container", Azurite will always get account name from request Uri path, not matter Azurite start with `--disableProductStyleUrl` or not.
+> Note. If use "host.docker.internal" as request Uri host, like "<http://host.docker.internal:10000/devstoreaccount1/container>", Azurite will always get account name from request Uri path, not matter Azurite start with `--disableProductStyleUrl` or not.
 
 ### Scalability & Performance
 
@@ -906,7 +960,7 @@ Legacy Azurite V2 supports Azure Storage Blob, Queue and Table services.
 Azurite V3 currently only supports Azure Storage blob service. Queue service is supported after V3.2.0-preview.
 Table service support is currently under discussion.
 
-Azurite V3 supports features from Azure Storage API version 2021-12-02, and will maintain parity with the latest API versions, in a more frequent update frequency than legacy Azurite V2.
+Azurite V3 supports features from Azure Storage API version 2023-01-03, and will maintain parity with the latest API versions, in a more frequent update frequency than legacy Azurite V2.
 
 ## TypeScript Server Code Generator
 
@@ -917,7 +971,7 @@ All the generated code is kept in `generated` folder, including the generated mi
 
 ## Support Matrix
 
-Latest release targets **2021-12-02** API version **blob** service.
+Latest release targets **2024-05-04** API version **blob** service.
 
 Detailed support matrix:
 
@@ -960,6 +1014,7 @@ Detailed support matrix:
 
   - SharedKey Lite
   - Static Website
+  - Soft delete & Undelete Container
   - Soft delete & Undelete Blob
   - Incremental Copy Blob
   - Blob Tags
@@ -974,9 +1029,8 @@ Detailed support matrix:
   - Sync copy blob by access source with oauth
   - Encryption Scope
   - Get Page Ranges Continuation Token
-  - Cold Tier
 
-Latest version supports for **2021-12-02** API version **queue** service.
+Latest version supports for **2024-05-04** API version **queue** service.
 Detailed support matrix:
 
 - Supported Vertical Features
@@ -1005,7 +1059,7 @@ Detailed support matrix:
 - Following features or REST APIs are NOT supported or limited supported in this release (will support more features per customers feedback in future releases)
   - SharedKey Lite
 
-Latest version supports for **2021-12-02** API version **table** service (preview).
+Latest version supports for **2024-05-04** API version **table** service (preview).
 Detailed support matrix:
 
 - Supported Vertical Features

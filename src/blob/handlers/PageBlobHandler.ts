@@ -13,7 +13,7 @@ import IBlobMetadataStore, {
   BlobModel
 } from "../persistence/IBlobMetadataStore";
 import { BLOB_API_VERSION } from "../utils/constants";
-import { deserializePageBlobRangeHeader } from "../utils/utils";
+import { deserializePageBlobRangeHeader, getTagsFromString } from "../utils/utils";
 import BaseHandler from "./BaseHandler";
 import IPageBlobRangesManager from "./IPageBlobRangesManager";
 
@@ -60,7 +60,7 @@ export default class PageBlobHandler extends BaseHandler
     const blobName = blobCtx.blob!;
     const date = blobCtx.startTime!;
 
-    if (options.pageBlobAccessTier !== undefined) {
+    if (options.tier !== undefined) {
       throw StorageErrorFactory.getAccessTierNotSupportedForBlobType(
         context.contextId!
       );
@@ -136,7 +136,8 @@ export default class PageBlobHandler extends BaseHandler
       },
       snapshot: "",
       isCommitted: true,
-      pageRangesInOrder: []
+      pageRangesInOrder: [],      
+      blobTags: options.blobTagsString === undefined ? undefined : getTagsFromString(options.blobTagsString, context.contextId!),
     };
 
     // TODO: What's happens when create page blob right before commit block list? Or should we lock
@@ -400,7 +401,6 @@ export default class PageBlobHandler extends BaseHandler
   }
 
   public async getPageRangesDiff(
-    prevsnapshot: string,
     options: Models.PageBlobGetPageRangesDiffOptionalParams,
     context: Context
   ): Promise<Models.PageBlobGetPageRangesDiffResponse> {
